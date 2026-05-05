@@ -1,0 +1,230 @@
+TALEXA CODEBASE DOCUMENTATION
+
+
+
+1. CURRENT ORCHESTRATION OF AGENTS (STILL UNDER WORK)
+
+The CLI still asks whether the source is "textbook" or "slides", but the slides path is not integrated yet.
+
+What it does:
+1. Prompts for source type: textbook or slides
+2. Exits early if "slides" is chosen
+3. Prompts for an input PDF path
+4. Creates a new numbered session folder under sessions/
+5. Builds a LangChain pipeline
+6. Runs three agents in sequence
+7. Prints the summary path, LaTeX path, slides PDF path, and slide image directory
+
+Important note:
+ but the  pipeline now has three stages:
+- SummaryAgent
+- textbook LatexAgent
+- SlideBuilderAgent
+
+---------------------------------
+2. SESSION LAYOUT
+---------------------------------
+
+Session creation is handled by:
+C:\Users\user\Desktop\Talexa\SLIDES_PIPELINE\session_manager.py
+
+For each run it creates:
+
+- sessions/<number>/input/
+- sessions/<number>/intermediate/
+- sessions/<number>/output/
+
+It also copies the original input PDF into the session input folder so the run is self-contained.
+
+----------------------------------------------
+AGENT-BY-AGENT BREAKDOWN
+----------------------------------------------
+
+5.2 Textbook LatexAgent
+File:     C:\Users\user\Desktop\Talexa\Agents\textbook_latex_agent.py
+Prompt:   C:\Users\user\Desktop\Talexa\Prompts\textbook_latex_prompt,py.txt
+Role:     Converts the condensed academic text into a normal article-style LaTeX document.
+Inputs:   summary text file
+Outputs:  LaTeX article file, typically Latex_<pdf_stem>.tex
+
+Main functions inside the agent:
+- _load_latex_prompt():     Loads the prompt by reading the prompt file and executing it with exec(...).
+- escape_latex(text):       Escapes a limited set of special characters: &, %, $, #, _
+- generate_latex(summary_path):     Reads the summary file and sends it to Ollama with LATEX_PROMPT.
+- save_latex(latex_code, output_path):     Writes the resulting LaTeX file.
+- compile_pdf(tex_path):     Runs pdflatex directly.
+- run(...):     Repeats generation until success if PDF compilation is requested.
+
+5.3 Slides LatexAgent
+File:     C:\Users\user\Desktop\Talexa\Agents\slides_latex_agent.py
+Prompt:   C:\Users\user\Desktop\Talexa\Prompts\slides_latex_prompt.py
+Role:     Converts an existing slide PDF into Beamer frames.
+Inputs:   slide PDF
+Outputs:  TeX file and compiled PDF in Data/intermediate
+
+Main functions inside the agent:
+- extract and clean slide text using pdfplumber
+- remove headers, footers, and irrelevant lines
+- detect slide titles from first meaningful line
+- group slides into chunks
+- generate frame blocks using LLM
+- assemble minimal Beamer document
+- compile using pdflatex
+
+5.3 SlideBuilderAgent
+File:     C:\Users\user\Desktop\Talexa\Agents\Slider_Builder_Agent.py
+Prompts:
+- C:\Users\user\Desktop\Talexa\Prompts\Slider_Builder_Prompt.py
+- C:\Users\user\Desktop\Talexa\Prompts\slide_beamer_correct.py
+- C:\Users\user\Desktop\Talexa\Prompts\select_proposal.py
+Role:     Converts article-style LaTeX into a Beamer slide deck, compiles it, fixes errors, refines layouts, and renders slide images.
+Inputs:   lecture-note LaTeX from Textbook LatexAgent
+Outputs:  final slide deck PDF, rendered slide images directory
+
+Main functions inside the agent:
+- generate_beamer(...):     Reads LaTeX input, calls Ollama, and generates full Beamer document with styling.
+- academic_design_block():     Returns Talexa Beamer style block.
+- apply_visual_design(code):     Injects style into Beamer preamble.
+- _chat_with_ollama(...):     Handles model calls and standardizes error handling.
+- compile_tex(tex_path):     Compiles using tectonic, or falls back to pdflatex/xelatex/lualatex.
+- correcte_error(beamer_code, error_info):     Fixes LaTeX compilation errors using LLM.
+- pdf2img(...):     Converts single-page PDF to image.
+- render_pdf_pages(...):     Converts full PDF into slide images.
+- improve_layout(code, feedback, beamer_save_path):     Generates layout variants and selects best using VLM.
+- cleanup_final_outputs(...):     Removes temporary files.
+- run(...):     Full pipeline execution including generation, fixing, refinement, and rendering.
+
+5.4 SubtitleCursorAgent
+File:     C:\Users\user\Desktop\Talexa\Agents\subtitle_focus_agent.py
+Prompt:   C:\Users\user\Desktop\Talexa\Prompts\subtitle_focus_prompt.py
+Role:     Analyzes slide images and generates lecturer-style narration with cursor focus points in JSON format.
+Inputs:   slide images
+Outputs:  subtitles JSON file (Data/intermediate/subtitles.json)
+
+Main functions inside the agent:
+- get_slide_images(folder):     Loads and sorts slide images.
+- _is_bad_sentence(sentence):     Filters weak or generic narration.
+- _clean_json(text):     Cleans model output into valid JSON.
+- parse_output(raw_text):     Validates and structures JSON output.
+- generate_for_slide(image_path, slide_index):     Generates narration for a single slide.
+- run(slide_folder):     Processes all slides and builds final JSON.
+
+
+5.5 JsonTranslateAgent
+File:     C:\Users\user\Desktop\Talexa\Agents\Translation_agent.py
+Prompt:   C:\Users\user\Desktop\Talexa\Prompts\Translation_prompt.py
+Role:     Translates narration JSON from English to Arabic while preserving structure.
+Inputs:   subtitles/narration JSON
+Outputs:  translated Arabic JSON
+
+Main functions inside the agent:
+- load_json(json_path):     Loads JSON input.
+- count_sentence_fields(data):     Validates number of sentence fields.
+- chunk_top_level_json(json_data, chunk_size=3):     Splits JSON into chunks.
+- translate_json(json_data, max_attempts=3):     Translates using LLM with retries.
+- translate_json_in_chunks(...):     Handles chunked translation.
+- save_json(json_data, output_json_path):     Saves translated JSON.
+- run(...):     Full translation pipeline execution.
+
+
+
+
+(THE REST OF THE AGENTS ARE STILL BEING DEBUGGED)
+
+
+------------------------
+ FILE-TO-FILE FLOW MAP
+------------------------
+
+Active textbook flow:
+
+SLIDES_PIPELINE/run_pipeline.py
+-> SLIDES_PIPELINE/session_manager.py
+-> SLIDES_PIPELINE/langchain_pipeline.py
+-> Agents/summary_agent.py
+-> Prompts/summary_prompt.py
+-> Agents/textbook_latex_agent.py
+-> Prompts/textbook_latex_prompt,py.txt
+-> Agents/Slider_Builder_Agent.py
+-> Prompts/Slider_Builder_Prompt.py
+-> Prompts/slide_beamer_correct.py
+-> Prompts/select_proposal.py
+-> rendered slide images in the session intermediate folder
+
+Standalone or partially integrated flow:
+
+existing slide PDF
+-> Agents/slides_latex_agent.py
+-> Prompts/slides_latex_prompt.py
+
+slide images
+-> Agents/subtitle_focus_agent.py
+-> intended prompt: Prompts/subtitle_focus_prompt.py
+-> subtitles.json
+
+subtitles.json
+-> Agents/Translation_agent.py
+-> Prompts/Translation_prompt.py
+-> Arabic JSON
+
+------------------------
+ IMPORTANT DIRECTORIES
+------------------------
+Agents/
+Contains the Python agents.
+
+Prompts/
+Contains prompt templates and raw prompt text.
+
+Data/
+contains the input, intermediate and output data
+
+
+
+-----------------------------------------------
+CURRENT DEPENDENCIES AND RUNTIME ASSUMPTIONS
+-----------------------------------------------
+The code explicitly uses:
+- ollama
+- fitz / PyMuPDF
+- pdfplumber
+- Pillow
+- httpx
+- langchain_core
+- a local TeX compiler
+
+Compiler fallback order in SlideBuilderAgent:
+- tectonic
+- pdflatex
+- xelatex
+- lualatex
+
+Models referenced directly in code:
+- qwen2.5:7b
+- qwen3-vl
+- qwen3-vl:8b
+
+The runtime also assumes:
+- Ollama is running locally
+- required models are already pulled
+- a usable LaTeX compiler is installed
+
+**********************
+## External dependency
+
+The talking head agent expects Hallo2 to exist at:
+
+/workspace/hallo2
+
+and uses:
+/workspace/hallo2/env/bin/python
+/workspace/hallo2/scripts/inference_long.py
+/workspace/hallo2/configs/inference/long.yaml
+
+
+
+
+
+
+
+
