@@ -29,7 +29,7 @@ class SlideBuilderAgent:
     def __init__(
         self,
         llm_model="qwen2.5:7b",
-        vlm_model="qwen2.5vl:7b",
+        vlm_model="qwen3-vl:8b",
         slide_prompt_path=str(Path(__file__).resolve().parents[1] / "Prompts" / "Slider_Builder_Prompt.py"),
         correct_prompt_path=str(Path(__file__).resolve().parents[1] / "Prompts" / "slide_beamer_correct.py"),
         select_proposal_prompt_path=str(Path(__file__).resolve().parents[1] / "Prompts" / "select_proposal.py"),
@@ -89,6 +89,10 @@ class SlideBuilderAgent:
 \setbeamercolor{palette tertiary}{fg=white,bg=TalexaSlate}
 \setbeamercolor{block title}{fg=white,bg=TalexaTeal}
 \setbeamercolor{block body}{fg=TalexaSlate,bg=TalexaMist}
+\setbeamercolor{block title alerted}{fg=white,bg=TalexaNavy}
+\setbeamercolor{block body alerted}{fg=TalexaSlate,bg=TalexaMist}
+\setbeamercolor{block title example}{fg=white,bg=TalexaGold}
+\setbeamercolor{block body example}{fg=TalexaSlate,bg=TalexaMist}
 \setbeamercolor{alerted text}{fg=TalexaGold}
 \setbeamercolor{item projected}{fg=white,bg=TalexaTeal}
 
@@ -113,10 +117,8 @@ class SlideBuilderAgent:
 \setbeamertemplate{footline}{
   \leavevmode
   \hbox{
-    \begin{beamercolorbox}[wd=.76\paperwidth,ht=2.8ex,dp=1.1ex,leftskip=1em,rightskip=1em]{palette secondary}
-      \usebeamerfont{author in head/foot}\insertshorttitle
-    \end{beamercolorbox}
-    \begin{beamercolorbox}[wd=.24\paperwidth,ht=2.8ex,dp=1.1ex,leftskip=.6em,rightskip=.8em]{palette primary}
+    \hfill
+    \begin{beamercolorbox}[wd=.14\paperwidth,ht=2.2ex,dp=.8ex,leftskip=.4em,rightskip=.8em]{palette primary}
       \hfill\insertframenumber{} / \inserttotalframenumber
     \end{beamercolorbox}
   }
@@ -137,7 +139,7 @@ class SlideBuilderAgent:
         if not isinstance(code, str):
             return code
         if "% Talexa academic visual design" in code:
-            return code
+            return self._ensure_top_aligned_documentclass(code)
 
         match = re.search(
             r'(\\documentclass(?:\[[^\]]*\])?\{beamer\})(.*?)(\\begin\{document\})',
@@ -148,6 +150,7 @@ class SlideBuilderAgent:
             return code
 
         documentclass = match.group(1)
+        documentclass = self._top_align_beamer_documentclass(documentclass)
         preamble = match.group(2).rstrip()
         begin_document = match.group(3)
         design_block = self.academic_design_block().strip()
@@ -159,6 +162,72 @@ class SlideBuilderAgent:
         new_preamble = "\n\n".join(new_preamble_parts)
 
         return code[:match.start()] + new_preamble + "\n\n" + begin_document + code[match.end():]
+
+    def _ensure_top_aligned_documentclass(self, code):
+        return re.sub(
+            r'\\documentclass(?:\[[^\]]*\])?\{beamer\}',
+            lambda match: self._top_align_beamer_documentclass(match.group(0)),
+            code,
+            count=1,
+        )
+
+    def _top_align_beamer_documentclass(self, documentclass):
+        option_match = re.match(r'\\documentclass(?:\[([^\]]*)\])?\{beamer\}', documentclass)
+        if not option_match:
+            return documentclass
+
+        option_text = option_match.group(1)
+        if option_text is None or not option_text.strip():
+            return r"\documentclass[t]{beamer}"
+
+        options = [option.strip() for option in option_text.split(",") if option.strip()]
+        if "t" not in options:
+            options.insert(0, "t")
+
+        return r"\documentclass[" + ",".join(options) + r"]{beamer}"
+
+    def flatten_deep_itemize(self, code, max_depth=2):
+        if not isinstance(code, str):
+            return code
+
+        lines = code.splitlines()
+        flattened_lines = []
+        itemize_depth = 0
+        skipped_depths = set()
+
+        begin_re = re.compile(r'^(\s*)\\begin\{itemize\}\s*$')
+        end_re = re.compile(r'^(\s*)\\end\{itemize\}\s*$')
+        item_re = re.compile(r'^(\s*)\\item\b')
+
+        for line in lines:
+            begin_match = begin_re.match(line)
+            if begin_match:
+                itemize_depth += 1
+                if itemize_depth > max_depth:
+                    skipped_depths.add(itemize_depth)
+                    continue
+                flattened_lines.append(line)
+                continue
+
+            end_match = end_re.match(line)
+            if end_match:
+                if itemize_depth in skipped_depths:
+                    skipped_depths.remove(itemize_depth)
+                    itemize_depth = max(0, itemize_depth - 1)
+                    continue
+                flattened_lines.append(line)
+                itemize_depth = max(0, itemize_depth - 1)
+                continue
+
+            item_match = item_re.match(line)
+            if item_match and itemize_depth > max_depth:
+                line = re.sub(r'^\s*\\item\b', ('  ' * max_depth) + r'\item', line, count=1)
+
+            flattened_lines.append(line)
+
+        flattened_code = "\n".join(flattened_lines)
+        flattened_code = re.sub(r'\n{3,}', '\n\n', flattened_code)
+        return flattened_code
 
     def _chat_with_ollama(self, model_name, messages, request_label, options=None):
         try:
@@ -250,6 +319,20 @@ class SlideBuilderAgent:
             print(e.stderr)
             return e.stderr or e.stdout
 
+    def has_fatal_latex_error(self, feedback):
+        if not feedback:
+            return False
+
+        fatal_patterns = [
+            r"(?im)^! .*error",
+            r"(?im)^! Undefined control sequence\.",
+            r"(?im)^error:",
+            r"(?im)emergency stop",
+            r"(?im)fatal error occurred",
+            r"(?im)no output pdf file produced",
+        ]
+        return any(re.search(pattern, feedback) for pattern in fatal_patterns)
+
     def correcte_error(self, beamer_code, error_info):
         with open(self.correct_prompt_path, "r", encoding="utf-8") as f:
             template_prompt = f.read()
@@ -269,7 +352,8 @@ class SlideBuilderAgent:
         )
 
         code = self.extract_beamer_code(content)
-        return self.apply_visual_design(code)
+        code = self.apply_visual_design(code)
+        return self.flatten_deep_itemize(code)
 
     def pdf2img(self, pdf_path, image_dir, dpi=300, fmt="png", strict_single_page=True):
         pdf_path = Path(pdf_path)
@@ -603,6 +687,9 @@ class SlideBuilderAgent:
                     break
 
         need_improve_list = sorted(set(need_improve_list))
+        if not need_improve_list:
+            print("No image layout overfull warnings detected; keeping the compiled PDF.")
+            return beamer_save_path.replace(".tex", ".pdf")
 
         proposal_tmp_dir = path.join("Data", "intermediate", "proposal_imgs")
         os.makedirs(proposal_tmp_dir, exist_ok=True)
@@ -677,7 +764,9 @@ class SlideBuilderAgent:
                 new_code.append("\\subsection{{{}}}".format(frame["subsection"]))
                 subsection.append(frame["subsection"])
 
-            new_code.append(self.add_small_after_blocks(frame["text"]))
+            frame_text = self.add_small_after_blocks(frame["text"])
+            frame_text = self.flatten_deep_itemize(frame_text)
+            new_code.append(frame_text)
 
         new_code.append("\\end{document}")
         new_code = "\n".join(new_code)
@@ -723,6 +812,7 @@ class SlideBuilderAgent:
 
         code = self.extract_beamer_code(content)
         code = self.apply_visual_design(code)
+        code = self.flatten_deep_itemize(code)
         if not isinstance(code, str):
             print("Failed to generate beamer code.")
             print(content)
@@ -797,9 +887,12 @@ class SlideBuilderAgent:
 
         attempt = 0
         while attempt < max_fix_attempts:
-            if "error" in feedback.lower():
+            if self.has_fatal_latex_error(feedback):
                 print(f"\nFix attempt {attempt + 1} of {max_fix_attempts}")
-                error_info = re.findall(r'^(error: .+)', feedback, flags=re.MULTILINE)
+                error_info = re.findall(
+                    r'(?im)^(?:error: .+|! .+|.*emergency stop.*|.*fatal error occurred.*|.*no output pdf file produced.*)',
+                    feedback,
+                )
 
                 fixed_code = self.correcte_error(code, error_info)
                 if not isinstance(fixed_code, str):
@@ -843,8 +936,8 @@ class SlideBuilderAgent:
 
 if __name__ == "__main__":
     agent = SlideBuilderAgent(
-        llm_model="qwen2.5:7b",
-        vlm_model="qwen2.5:7b"
+        llm_model="qwen3",
+        vlm_model="qwen3-vl:8b"
     )
 
     final_pdf = agent.run(
