@@ -9,6 +9,7 @@ import threading
 import time
 import uuid
 import zipfile
+import traceback
 from datetime import datetime, timedelta, timezone
 from html import escape
 from http.cookies import SimpleCookie
@@ -86,7 +87,8 @@ def security_headers(environ):
         ("Pragma", "no-cache"),
         ("X-Content-Type-Options", "nosniff"),
         ("X-Frame-Options", "DENY"),
-        ("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; form-action 'self'; base-uri 'self'"),
+        ("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; form-action 'self'; base-uri 'self'"),
+
     ]
     if is_secure_request(environ):
         headers.append(("Strict-Transport-Security", "max-age=31536000; includeSubDomains"))
@@ -262,13 +264,12 @@ def page_layout(title, body, user=None, notice="", wide=False, refresh_seconds=N
     if user:
         user_block = f"""
           <div class="user-bar">
-            <span>{escape(user['Email'])}</span>
+            <span class="user-email">{escape(user['Email'])}</span>
             <a href="/upload">Upload</a>
-            <a href="/logout">Logout</a>
+            <a href="/logout" class="logout">Logout</a>
           </div>
         """
     notice_block = f'<div class="notice">{escape(notice)}</div>' if notice else ""
-    shell_class = "shell wide" if wide else "shell"
     refresh_tag = f'<meta http-equiv="refresh" content="{int(refresh_seconds)}" />' if refresh_seconds else ""
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -277,30 +278,62 @@ def page_layout(title, body, user=None, notice="", wide=False, refresh_seconds=N
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     {refresh_tag}
     <title>{escape(title)}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="stylesheet" href="/static/app.css" />
   </head>
   <body>
-    <div class="{shell_class}">
+    <div class="shell">
       <header class="topbar">
-        <a class="brand" href="/upload">TALEXA</a>
+        <a class="brand" href="/upload">TALEXA<span class="brand-dot"></span></a>
         {user_block}
       </header>
       {notice_block}
       {body}
     </div>
+    <script>
+      document.querySelectorAll('.robot-wrap img').forEach(function(img) {{
+        img.addEventListener('click', function() {{ showToast('Hello! I am your AI lecturer.'); }});
+      }});
+      function showToast(msg) {{
+        var t = document.getElementById('talexa-toast');
+        if (!t) {{
+          t = document.createElement('div');
+          t.id = 'talexa-toast';
+          t.style.cssText = 'position:fixed;bottom:20px;right:20px;background:#0d1f6e;color:#fff;padding:10px 18px;border-radius:12px;font-size:0.82rem;font-weight:700;border-left:4px solid #4db8e8;opacity:0;transform:translateY(10px);transition:all .3s;pointer-events:none;z-index:999;font-family:Space Grotesk,sans-serif;';
+          document.body.appendChild(t);
+        }}
+        t.textContent = msg;
+        t.style.opacity = '1'; t.style.transform = 'translateY(0)';
+        setTimeout(function() {{ t.style.opacity = '0'; t.style.transform = 'translateY(10px)'; }}, 2400);
+      }}
+    </script>
   </body>
 </html>"""
 
 
-def auth_shell(title_text, form_html):
+def auth_shell(title_text, subtitle_text, form_html):
     return f"""
     <main class="auth-page">
       <section class="auth-grid-talexa">
-        <section class="hero-panel robot-only-panel">
-          <div class="robot-wrap"><img src="/assets/robot.png" alt="Talexa robot" /></div>
+        <section class="hero-panel">
+          <p class="eyebrow">AI-Powered Education</p>
+          <h1>Turn your notes into an <span class="ac1">AI lecture.</span><br/>Like <span class="ac2">magic.</span></h1>
+          <p class="hero-subtitle">Upload your slides or textbook, a portrait and voice sample &mdash; Talexa generates the full lecture for you.</p>
+          <div class="hero-steps">
+            <div class="hero-step"><span class="hero-step-num n1">1</span> Upload your PDF &amp; audio sample</div>
+            <div class="hero-step"><span class="hero-step-num n2">2</span> Choose language &amp; content type</div>
+            <div class="hero-step"><span class="hero-step-num n3">3</span> Download your AI-generated lecture</div>
+          </div>
+          <div class="robot-wrap"><img src="/assets/robot.png" alt="Talexa AI lecturer" /></div>
         </section>
         <section class="auth-form-panel">
-          <h2>{escape(title_text)}</h2>
+          <div class="badge-row">
+            <span class="badge badge-blue">Grad Project 2025</span>
+            <span class="badge badge-cyan">End-to-end AI</span>
+          </div>
+          <h2 class="form-heading">{escape(title_text)}</h2>
+          <p class="form-sub">{escape(subtitle_text)}</p>
           {form_html}
         </section>
       </section>
@@ -310,49 +343,99 @@ def auth_shell(title_text, form_html):
 
 def login_page(notice=""):
     form = """
-      <form method="post" action="/login" class="talexa-form">
-        <input type="email" name="email" placeholder="Email address" required />
-        <input type="password" name="password" placeholder="Password" required />
-        <button type="submit" class="button outline big">log in</button>
+      <form method="post" action="/login" class="talexa-form" onsubmit="handleLogin(event)">
+        <div class="field-wrap">
+          <label for="login-email">Email address</label>
+          <input type="email" id="login-email" name="email" placeholder="you@university.edu" required oninput="validateEmail('login-email','login-email-notice')" />
+          <div class="field-notice" id="login-email-notice"></div>
+        </div>
+        <div class="field-wrap">
+          <label for="login-pw">Password</label>
+          <div class="pw-wrap">
+            <input type="password" id="login-pw" name="password" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;" required />
+            <button type="button" class="pw-toggle" onclick="togglePw('login-pw',this)">Show</button>
+          </div>
+        </div>
+        <div class="field-notice" id="login-form-notice"></div>
+        <button type="submit" class="button primary big" style="margin-top:4px;">Log in &rarr;</button>
       </form>
       <div class="divider"><span>or</span></div>
-      <a class="button outline big full" href="/sign-up">sign up</a>
+      <a class="button outline big full" href="/sign-up">Create an account</a>
+      <script>
+        function togglePw(id,btn){var i=document.getElementById(id);i.type=i.type==='password'?'text':'password';btn.textContent=i.type==='password'?'Show':'Hide';}
+        function validateEmail(fid,nid){var v=document.getElementById(fid).value,n=document.getElementById(nid);if(v&&!v.includes('@')){n.textContent='Enter a valid email.';n.className='field-notice err';}else{n.textContent='';n.className='field-notice';}}
+        function handleLogin(e){var em=document.getElementById('login-email').value,pw=document.getElementById('login-pw').value,n=document.getElementById('login-form-notice');if(!em||!em.includes('@')){e.preventDefault();n.textContent='Please enter a valid email.';n.className='field-notice err';}else if(!pw){e.preventDefault();n.textContent='Please enter your password.';n.className='field-notice err';}}
+      </script>
     """
-    return page_layout("TALEXA Login", auth_shell("Welcome to Talexa! Your personal AI lecture", form), notice=notice, wide=True)
+    return page_layout("TALEXA \u2014 Login", auth_shell("Welcome back.", "Sign in to your Talexa account to continue.", form), notice=notice)
 
 
 def signup_page(notice=""):
     form = """
-      <form method="post" action="/sign-up" class="talexa-form">
-        <input type="email" name="email" placeholder="Email" required />
-        <input type="password" name="password" placeholder="Password" required />
-        <button type="submit" class="button outline big">create account</button>
+      <form method="post" action="/sign-up" class="talexa-form" onsubmit="handleSignup(event)">
+        <div class="field-wrap">
+          <label for="su-email">Email address</label>
+          <input type="email" id="su-email" name="email" placeholder="you@university.edu" required oninput="validateEmail('su-email','su-email-notice')" />
+          <div class="field-notice" id="su-email-notice"></div>
+        </div>
+        <div class="field-wrap">
+          <label for="su-pw">Password</label>
+          <div class="pw-wrap">
+            <input type="password" id="su-pw" name="password" placeholder="Choose a strong password" required oninput="checkStrength()" />
+            <button type="button" class="pw-toggle" onclick="togglePw('su-pw',this)">Show</button>
+          </div>
+          <div class="strength-bar"><div class="strength-fill" id="strength-fill"></div></div>
+          <div class="strength-label" id="strength-label"></div>
+        </div>
+        <div class="field-notice" id="su-form-notice"></div>
+        <button type="submit" class="button primary big" style="margin-top:4px;">Create account &rarr;</button>
       </form>
       <div class="divider"><span>or</span></div>
-      <a class="button outline big full" href="/login">back to log in</a>
+      <a class="button outline big full" href="/login">Back to log in</a>
+      <script>
+        function togglePw(id,btn){var i=document.getElementById(id);i.type=i.type==='password'?'text':'password';btn.textContent=i.type==='password'?'Show':'Hide';}
+        function validateEmail(fid,nid){var v=document.getElementById(fid).value,n=document.getElementById(nid);if(v&&!v.includes('@')){n.textContent='Enter a valid email.';n.className='field-notice err';}else{n.textContent='';n.className='field-notice';}}
+        function checkStrength(){var pw=document.getElementById('su-pw').value,f=document.getElementById('strength-fill'),l=document.getElementById('strength-label'),s=0;if(pw.length>=8)s++;if(/[A-Z]/.test(pw))s++;if(/[0-9]/.test(pw))s++;if(/[^A-Za-z0-9]/.test(pw))s++;var p=[0,25,50,75,100][s],c=['','#e24b4a','#ef9f27','#4db8e8','#1d9e75'],lb=['','Weak','Fair','Good','Strong'];f.style.width=p+'%';f.style.background=c[s]||'#e2e4ef';l.textContent=s>0?lb[s]:'';l.style.color=c[s]||'var(--muted)';}
+        function handleSignup(e){var em=document.getElementById('su-email').value,pw=document.getElementById('su-pw').value,n=document.getElementById('su-form-notice');if(!em||!em.includes('@')){e.preventDefault();n.textContent='Please enter a valid email.';n.className='field-notice err';}else if(pw.length<6){e.preventDefault();n.textContent='Password must be at least 6 characters.';n.className='field-notice err';}}
+      </script>
     """
-    return page_layout("TALEXA Sign Up", auth_shell("Create account:", form), notice=notice, wide=True)
+    return page_layout("TALEXA \u2014 Sign Up", auth_shell("Create your account.", "Join Talexa and start generating AI lectures.", form), notice=notice)
 
 
 def terms_page(user, notice=""):
     body = """
     <main class="terms-page">
       <section class="terms-panel">
-        <h2>TERMS AND CONDITIONS</h2>
-        <ul>
-          <li>By using our platform, you agree that any images, portraits, textbooks, and audio files you upload will be processed solely for generating AI-generated slides and lectures.</li>
-          <li>All uploaded files are used by the system to process your content and generate the requested lecture.</li>
-          <li>Your uploaded content is never shared with third parties.</li>
-          <li>By uploading any material, you confirm that you have the legal right to use such content and that it does not violate copyright, intellectual property, or privacy laws.</li>
+        <h2>Terms &amp; Conditions</h2>
+        <p class="terms-lead">Click each item to acknowledge it, then accept to continue.</p>
+        <p class="terms-count" id="tcount">0 of 4 acknowledged</p>
+        <ul class="terms-list" id="terms-list">
+          <li onclick="checkTerm(this)"><div class="term-check"></div>Your uploads (images, portraits, textbooks, audio) are only used to generate your AI lecture. Nothing else.</li>
+          <li onclick="checkTerm(this)"><div class="term-check"></div>All files are processed by our system solely to create the requested lecture content.</li>
+          <li onclick="checkTerm(this)"><div class="term-check"></div>Your content stays private &mdash; we never share your uploads with third parties.</li>
+          <li onclick="checkTerm(this)"><div class="term-check"></div>By uploading, you confirm you have the legal right to use the content and it does not violate copyright or privacy laws.</li>
         </ul>
-        <form method="post" action="/terms/accept">
-          <button type="submit" class="button outline big">ACCEPT TERMS AND CONDITIONS</button>
-        </form>
-        <a class="button outline big full" href="/logout">BACK TO LOGIN</a>
+        <div class="terms-actions">
+          <form method="post" action="/terms/accept" id="terms-form">
+            <button type="submit" class="button primary big" id="terms-btn" disabled style="opacity:.4;cursor:not-allowed;">Accept &amp; Continue &rarr;</button>
+          </form>
+          <a class="button outline big" href="/logout">Back to Login</a>
+        </div>
+        <script>
+          var checked = 0;
+          function checkTerm(el) {
+            if (el.classList.contains('checked')) { el.classList.remove('checked'); el.querySelector('.term-check').textContent = ''; checked = Math.max(0, checked - 1); }
+            else { el.classList.add('checked'); el.querySelector('.term-check').textContent = '\u2713'; checked++; }
+            document.getElementById('tcount').textContent = checked + ' of 4 acknowledged';
+            var btn = document.getElementById('terms-btn');
+            if (checked === 4) { btn.disabled = false; btn.style.opacity = '1'; btn.style.cursor = 'pointer'; }
+            else { btn.disabled = true; btn.style.opacity = '.4'; btn.style.cursor = 'not-allowed'; }
+          }
+        </script>
       </section>
     </main>
     """
-    return page_layout("TALEXA Terms", body, user=user, notice=notice, wide=True)
+    return page_layout("TALEXA \u2014 Terms", body, user=user, notice=notice)
 
 
 def upload_page(environ, user, notice=""):
@@ -360,65 +443,107 @@ def upload_page(environ, user, notice=""):
     session_record = get_session_record(session_id) if session_id else None
     session_status = str(session_record["status"]) if session_record else ""
     slides_output, video_output = existing_output_paths(session_id)
-    session_chip = f'<div class="session-chip">Current Session: {session_id}</div>' if session_id else ""
+    session_chip = f'<div class="session-chip"><span class="session-chip-dot"></span>Session #{session_id} &mdash; Active</div>' if session_id else ""
     waiting_block = ""
     refresh_seconds = None
     if session_status == "assembling":
-        waiting_block = '<div class="generation-status">lecture is being assembled</div>'
+        waiting_block = '<div class="generation-status working">Assembling your lecture video&hellip;</div>'
         refresh_seconds = 20
     elif session_status == "processing":
-        waiting_block = '<div class="generation-status">Generating lecture assets... this page will keep checking for progress.</div>'
+        waiting_block = '<div class="generation-status working">Generating lecture assets&hellip; this page updates automatically.</div>'
         refresh_seconds = 20
     elif session_status == "failed":
-        waiting_block = '<div class="generation-status error">Generation failed. Please review the session files or try again.</div>'
+        waiting_block = '<div class="generation-status error">Generation failed. Please try again.</div>'
     elif session_id and not (video_output and video_output.exists()):
-        waiting_block = '<div class="generation-status">Generating... this page will keep checking for the lecture video.</div>'
+        waiting_block = '<div class="generation-status working">Generating&hellip; checking for your lecture video.</div>'
         refresh_seconds = 20
     download_links = render_downloads(session_id, slides_output, video_output)
     body = f"""
     <main class="upload-page">
       {session_chip}
       <section class="upload-layout">
-        <section class="hero-panel upload-hero robot-only-panel">
-          <div class="robot-wrap upload-robot"><img src="/assets/robot.png" alt="Talexa robot" /></div>
+        <section class="hero-panel upload-hero">
+          <p class="eyebrow">Generate a Lecture</p>
+          <h1>Upload your <span class="ac1">materials</span> and let Talexa <span class="ac2">cook.</span></h1>
+          <p class="hero-subtitle">Provide a PDF, your portrait and a voice sample &mdash; Talexa handles slides, narration, and a full video lecture.</p>
+          <div class="hero-steps">
+            <div class="hero-step" id="step-pdf"><span class="hero-step-num n1">1</span> Your PDF slides or textbook</div>
+            <div class="hero-step" id="step-img"><span class="hero-step-num n2">2</span> A portrait photo of you</div>
+            <div class="hero-step" id="step-wav"><span class="hero-step-num n3">3</span> A short WAV voice sample</div>
+          </div>
+          <div class="robot-wrap"><img src="/assets/robot.png" alt="Talexa AI lecturer" /></div>
         </section>
         <section class="upload-panel">
-          <form method="post" action="/generate" enctype="multipart/form-data" class="upload-form">
-            <label class="upload-card">
-              <span>Upload Text</span>
-              <input type="file" name="text_pdf" accept="application/pdf" required />
-              <small>PDF only</small>
-              <div class="radio-row">
-                <label><input type="radio" name="text_type" value="slides" checked /> Slides</label>
-                <label><input type="radio" name="text_type" value="textbook" /> Textbook Chapter</label>
+          <h2 class="upload-panel-title">New generation</h2>
+          <p class="upload-panel-sub">Fill all fields and hit Generate.</p>
+          <div class="progress-track"><div class="progress-fill" id="prog-fill"></div></div>
+          <p class="progress-label" id="prog-label">0 of 3 files ready</p>
+          <form method="post" action="/generate" enctype="multipart/form-data" class="upload-form" onsubmit="return checkAllFiles()">
+            <div class="upload-card" id="card-pdf">
+              <div class="upload-card-header">
+                <div class="upload-card-icon">&#128196;</div>
+                <div><div class="upload-card-label">Text PDF</div><small>Slides deck or textbook chapter</small></div>
               </div>
-            </label>
-            <label class="upload-card">
-              <span>Upload Portrait</span>
-              <input type="file" name="portrait_png" accept="image/png,image/jpeg,image/webp" required />
-              <small>PNG, JPG, JPEG, or WEBP</small>
-            </label>
-            <label class="upload-card">
-              <span>Upload Audio Sample</span>
-              <input type="file" name="audio_wav" accept="audio/wav,.wav" required />
-              <small>WAV only</small>
-            </label>
+              <input type="file" name="text_pdf" accept="application/pdf" required onchange="markFile('pdf',this)" />
+              <div style="margin-top:10px;">
+                <p class="radio-section-label">Content type</p>
+                <div class="radio-row">
+                  <label><input type="radio" name="text_type" value="slides" checked /> Slides</label>
+                  <label><input type="radio" name="text_type" value="textbook" /> Textbook</label>
+                </div>
+              </div>
+            </div>
+            <div class="upload-card" id="card-img">
+              <div class="upload-card-header">
+                <div class="upload-card-icon">&#128247;</div>
+                <div><div class="upload-card-label">Portrait image</div><small>PNG, JPG, JPEG, or WEBP</small></div>
+              </div>
+              <input type="file" name="portrait_png" accept="image/png,image/jpeg,image/webp" required onchange="markFile('img',this)" />
+            </div>
+            <div class="upload-card" id="card-wav">
+              <div class="upload-card-header">
+                <div class="upload-card-icon">&#127908;</div>
+                <div><div class="upload-card-label">Voice sample</div><small>WAV only &mdash; 5+ seconds of clear speech</small></div>
+              </div>
+              <input type="file" name="audio_wav" accept="audio/wav,.wav" required onchange="markFile('wav',this)" />
+            </div>
             <div class="upload-card">
-              <span>Choose Language</span>
+              <p class="radio-section-label">Output language</p>
               <div class="radio-row">
                 <label><input type="radio" name="language" value="english" checked /> English</label>
                 <label><input type="radio" name="language" value="arabic" /> Arabic</label>
               </div>
             </div>
-            <button type="submit" class="button outline generate-button">GENERATE</button>
+            <button type="submit" class="button primary big" id="gen-btn">Generate Lecture &rarr;</button>
           </form>
           {waiting_block}
           {download_links}
+          <script>
+            var files = {{pdf:false,img:false,wav:false}};
+            function markFile(key, inp) {{
+              if (inp.files && inp.files.length > 0) {{
+                files[key] = true;
+                document.getElementById('card-'+key).classList.add('ready');
+                var step = {{pdf:'step-pdf',img:'step-img',wav:'step-wav'}}[key];
+                if (step) {{ var s=document.getElementById(step); if(s){{s.style.color='#7dd4f5';s.style.background='rgba(77,184,232,0.12)';}} }}
+              }}
+              var done = Object.values(files).filter(Boolean).length;
+              document.getElementById('prog-fill').style.width = Math.round(done/3*100)+'%';
+              document.getElementById('prog-label').textContent = done+' of 3 files ready';
+            }}
+            function checkAllFiles() {{
+              var done = Object.values(files).filter(Boolean).length;
+              if (done < 3) {{ alert('Please upload all 3 files before generating.'); return false; }}
+              var btn = document.getElementById('gen-btn');
+              btn.textContent = 'Generating\u2026'; btn.disabled = true; btn.style.opacity = '0.6';
+              return true;
+            }}
+          </script>
         </section>
       </section>
     </main>
     """
-    return page_layout("TALEXA Upload", body, user=user, notice=notice, wide=True, refresh_seconds=refresh_seconds)
+    return page_layout("TALEXA \u2014 Generate", body, user=user, notice=notice, refresh_seconds=refresh_seconds)
 
 
 def render_downloads(session_id, slides_output, video_output):
@@ -426,9 +551,9 @@ def render_downloads(session_id, slides_output, video_output):
         return ""
     links = []
     if video_output and video_output.exists():
-        links.append(f'<a class="button outline download-button" href="/download/lecture?session_id={session_id}">Download Lecture Video</a>')
+        links.append(f'<a class="download-button dl-video" href="/download/lecture?session_id={session_id}">&#9654; Download Lecture Video</a>')
     if slides_output and slides_output.exists() and slides_output.is_file():
-        links.append(f'<a class="button outline download-button" href="/download/slides?session_id={session_id}">Download Lecture Slides</a>')
+        links.append(f'<a class="download-button dl-slides" href="/download/slides?session_id={session_id}">&#128196; Download Lecture Slides</a>')
     if not links:
         return ""
     return f'<div class="download-stack">{"".join(links)}</div>'
@@ -630,7 +755,7 @@ def run_generation_job(session_id, user_id, pipeline_session, text_type, languag
         update_session_status(session_id, "failed")
         error_path = pipeline_session.output_dir / "generation_error.txt"
         error_path.parent.mkdir(parents=True, exist_ok=True)
-        error_path.write_text(str(exc), encoding="utf-8")
+        error_path.write_text(traceback.format_exc(), encoding="utf-8")
 
 
 def existing_output_paths(session_id):
@@ -744,6 +869,6 @@ def application(environ, start_response):
 if __name__ == "__main__":
     init_db()
     port = int(os.environ.get("PORT", "8000"))
-    print(f"TALEXA running at http://127.0.0.1:{port}", flush=True)
-    with make_server("127.0.0.1", port, application) as httpd:
+    print(f"TALEXA running at http://0.0.0.0:{port}", flush=True)
+    with make_server("0.0.0.0", port, application) as httpd:
         httpd.serve_forever()
