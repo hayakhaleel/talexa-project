@@ -26,7 +26,7 @@ ARABIC_SUBTITLE_HINTS = ("arabic", "translated", "translation")
 CURSOR_IMAGE_PATH = PROJECT_ROOT / "PIPELINE" / "cursor.png"
 CURSOR_HOTSPOT_X = 0.12
 CURSOR_HOTSPOT_Y = 0.08
-TALKING_HEAD_WIDTH_PX = 300
+TALKING_HEAD_WIDTH_PX = 228
 SLIDE_TRANSITION_HOLD_SECONDS = 1.0
 
 
@@ -384,21 +384,6 @@ def _render_frame(
     slide_image = base_slide_image.copy()
     overlay = Image.new("RGBA", (frame_width, frame_height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
-
-    subtitle = _current_subtitle(slide, timestamp)
-    if subtitle:
-        text_margin = int(frame_width * 0.07)
-        max_text_width = frame_width - (text_margin * 2)
-        text_lines = _wrap_text(draw, subtitle.text, font, max_text_width)
-        line_height = font.getbbox("Ag")[3] - font.getbbox("Ag")[1] + 6
-        text_block_height = line_height * len(text_lines)
-        text_y = frame_height - text_block_height - 42
-        for line in text_lines:
-            bbox = draw.textbbox((0, 0), line, font=font)
-            line_width = bbox[2] - bbox[0]
-            text_x = (frame_width - line_width) / 2
-            draw.text((text_x, text_y), line, font=font, fill=(0, 0, 0, 255))
-            text_y += line_height
 
     raw_cursor = _cursor_for_time(cursor_segments, timestamp)
     if raw_cursor:
