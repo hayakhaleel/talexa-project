@@ -156,7 +156,8 @@ def get_max_session_id() -> int:
 
 def create_session_record(
     *,
-    session_id: int,
+    session_id: int | None = None,
+    minimum_session_id: int = 1,
     user_id: int,
     text_type: str,
     language: str,
@@ -168,15 +169,28 @@ def create_session_record(
 
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute(
-            """
-            INSERT INTO Sessions (session_ID, user_ID, Text_type, Language, status, expire_time)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (session_id, user_id, text_type, language, status, expire_time),
-        )
+        if session_id is None:
+            cursor.execute("BEGIN IMMEDIATE")
+            cursor.execute("SELECT COALESCE(MAX(session_ID), 0) FROM Sessions")
+            max_session_id = int(cursor.fetchone()[0])
+            session_id = max(max_session_id + 1, int(minimum_session_id))
+            cursor.execute(
+                """
+                INSERT INTO Sessions (session_ID, user_ID, Text_type, Language, status, expire_time)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (session_id, user_id, text_type, language, status, expire_time),
+            )
+        else:
+            cursor.execute(
+                """
+                INSERT INTO Sessions (session_ID, user_ID, Text_type, Language, status, expire_time)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (session_id, user_id, text_type, language, status, expire_time),
+            )
         conn.commit()
-        return session_id
+        return int(session_id)
 
 
 def update_session_status(session_id: int, status: str) -> None:
