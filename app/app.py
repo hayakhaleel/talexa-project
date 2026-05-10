@@ -329,7 +329,7 @@ def auth_shell(title_text, subtitle_text, form_html):
         </section>
         <section class="auth-form-panel">
           <div class="badge-row">
-            <span class="badge badge-blue">Grad Project 2025</span>
+            <span class="badge badge-blue">Grad Project 2026</span>
             <span class="badge badge-cyan">End-to-end AI</span>
           </div>
           <h2 class="form-heading">{escape(title_text)}</h2>
@@ -446,7 +446,10 @@ def upload_page(environ, user, notice=""):
     session_chip = f'<div class="session-chip"><span class="session-chip-dot"></span>Session #{session_id} &mdash; Active</div>' if session_id else ""
     waiting_block = ""
     refresh_seconds = None
-    if session_status == "assembling":
+    if video_output and video_output.exists():
+        waiting_block = ""
+        refresh_seconds = None
+    elif session_status == "assembling":
         waiting_block = '<div class="generation-status working">Assembling your lecture video&hellip;</div>'
         refresh_seconds = 20
     elif session_status == "processing":
@@ -454,7 +457,7 @@ def upload_page(environ, user, notice=""):
         refresh_seconds = 20
     elif session_status == "failed":
         waiting_block = '<div class="generation-status error">Generation failed. Please try again.</div>'
-    elif session_id and not (video_output and video_output.exists()):
+    elif session_id:
         waiting_block = '<div class="generation-status working">Generating&hellip; checking for your lecture video.</div>'
         refresh_seconds = 20
     download_links = render_downloads(session_id, slides_output, video_output)
