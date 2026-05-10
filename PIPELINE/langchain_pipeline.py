@@ -1,4 +1,4 @@
-from __future__ import annotations
+ slidfrom __future__ import annotations
 
 from pathlib import Path
 from typing import Any
@@ -20,6 +20,8 @@ from Agents.slides_latex_agent import LatexAgent as SlidesLatexAgent
 from Agents.speech_agent import SpeechAgent
 from Agents.subtitle_focus_agent import SubtitleFocusAgent
 from Agents.talking_head_agent import TalkingHeadApiAgent
+
+DEFAULT_TRANSLATION_MODEL = "facebook/nllb-200-distilled-600M"
 
 
 def _file_stem_from_state(state: dict[str, Any]) -> str:
@@ -228,13 +230,23 @@ def build_slides_pipeline(
         latex_path = latex_output_dir / f"{latex_base_name}.tex"
         slides_pdf_path = Path(state["output_dir"]) / f"SLIDES_{input_stem}.pdf"
         slide_images_dir = Path(state["intermediate_dir"]) / f"SLIDES_IMAGES_{input_stem}"
+        renderer = SlideBuilderAgent()
+
+        if latex_path.exists():
+            latex_code = latex_path.read_text(encoding="utf-8")
+            designed_latex_code = renderer.apply_visual_design(latex_code)
+            if designed_latex_code != latex_code:
+                latex_path.write_text(designed_latex_code, encoding="utf-8")
+                designed_feedback = renderer.compile_tex(str(latex_path))
+                designed_pdf_path = latex_path.with_suffix(".pdf")
+                if designed_pdf_path.exists() and not renderer.has_fatal_latex_error(designed_feedback):
+                    raw_pdf_path = designed_pdf_path
 
         if raw_pdf_path.resolve() != slides_pdf_path.resolve():
             if slides_pdf_path.exists():
                 slides_pdf_path.unlink()
             raw_pdf_path.replace(slides_pdf_path)
 
-        renderer = SlideBuilderAgent()
         renderer.render_pdf_pages(str(slides_pdf_path), str(slide_images_dir), dpi=200)
 
         updated_state = dict(state)
@@ -366,13 +378,13 @@ def create_textbook_pipeline(
     latex_agent = LatexAgent(model=model_name)
     slide_builder_agent = SlideBuilderAgent(
         llm_model=model_name,
-        vlm_model="qwen2.5vl:7b",
+        vlm_model="qwen3-vl:8b",
     )
     subtitle_agent = SubtitleFocusAgent(
-        model_name="qwen2.5vl:7b",
+        model_name="qwen3-vl:8b",
     )
     translation_agent = JsonTranslateAgent(
-        model_name=model_name,
+        model_name=DEFAULT_TRANSLATION_MODEL,
         base_data_dir=str(base_data_dir) if base_data_dir is not None else "Data",
     )
     return build_textbook_pipeline(
@@ -390,10 +402,10 @@ def create_slides_pipeline(
 ):
     slides_latex_agent = SlidesLatexAgent(model_name=model_name)
     subtitle_agent = SubtitleFocusAgent(
-        model_name="qwen2.5vl:7b",
+        model_name="qwen3-vl:8b",
     )
     translation_agent = JsonTranslateAgent(
-        model_name=model_name,
+        model_name=DEFAULT_TRANSLATION_MODEL,
         base_data_dir=str(base_data_dir) if base_data_dir is not None else "Data",
     )
     return build_slides_pipeline(
@@ -401,3 +413,4 @@ def create_slides_pipeline(
         subtitle_agent=subtitle_agent,
         translation_agent=translation_agent,
     )
+
