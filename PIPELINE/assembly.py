@@ -452,7 +452,6 @@ def overlay_talking_head_video(
         str(output_path),
     ]
     subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     return True
 
 
