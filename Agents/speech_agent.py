@@ -371,6 +371,11 @@ class SpeechAgent:
     # TTS generation
     # -------------------------------------------------
     def generate_chunk(self, chunk: str, out_file: str, voice_id: str) -> None:
+        print("[ElevenLabs Request]")
+        print("Voice ID:", voice_id)
+        print("Model ID:", self.model_id)
+        print("Output file:", out_file)
+        print("Text:", chunk[:200])
         audio = self.client.text_to_speech.convert(
             voice_id=voice_id,
             text=chunk,
