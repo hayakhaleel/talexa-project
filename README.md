@@ -39,6 +39,9 @@ python -m pip install -r requirements.txt
 
 python scripts/download_nllb_translation_model.py
 
+curl -fsSL https://ollama.com/install.sh | sh
+ollama serve
+
 ollama pull qwen2.5:7b
 ollama pull qwen2.5vl:7b
 ollama pull qwen3
