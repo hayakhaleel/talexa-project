@@ -34,7 +34,7 @@ class TalkingHeadApiAgent:
         self.source_image = os.path.abspath(source_image)
         self.audio_dir = os.path.abspath(audio_dir)
         self.output_dir = os.path.abspath(output_dir)
-        self.api_key = api_key or os.getenv("HEYGEN_API_KEY")
+        self.api_key = api_key or "sk_V2_hgu_k2avJCi8faC_62lLDoRiBMm1w1cQ5uHEpdIC3Bp5bFzB"
         self.ffmpeg_binary = ffmpeg_binary
         self.title = title
         self.poll_interval_seconds = poll_interval_seconds
@@ -605,7 +605,7 @@ if __name__ == "__main__":
         source_image=args.image,
         audio_dir=args.audio_dir,
         output_dir=args.output_dir,
-        api_key=args.api_key,
+        api_key="sk_V2_hgu_k2avJCi8faC_62lLDoRiBMm1w1cQ5uHEpdIC3Bp5bFzB",
         ffmpeg_binary=args.ffmpeg_binary,
         title=args.title,
         poll_interval_seconds=args.poll_interval,

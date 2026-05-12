@@ -125,11 +125,14 @@ class LatexAgent:
         text = re.sub(r'\*\*(.+?)\*\*', r'\\textbf{\1}', text)
 
         # ── 2. Missing backslash on \item ──────────────────────────────────
+        # Matches lines like "item foo" or "   item foo" but NOT "\item foo"
         text = re.sub(r'(?m)^(\s*)(?<!\\)item\b', r'\1\\item', text)
 
         # ── 3. Replace \begin{verbatim}...\end{verbatim} with \texttt{} ────
+        # verbatim is not allowed inside beamer frames
         def replace_verbatim(m):
             content = m.group(1).strip()
+            # escape special LaTeX chars for texttt context
             content = content.replace('\\', '\\textbackslash{}')
             content = content.replace('{', '\\{').replace('}', '\\}')
             content = content.replace('_', '\\_').replace('%', '\\%')
@@ -150,6 +153,7 @@ class LatexAgent:
         )
 
         # ── 4. Markdown dash bullets → \item ───────────────────────────────
+        # Handles "  - Some text" inside itemize blocks
         text = re.sub(r'(?m)^(\s+)- (.+)$', r'\1\\item \2', text)
 
         # ── 5. Unescaped & outside LaTeX commands ──────────────────────────
@@ -182,14 +186,6 @@ class LatexAgent:
         title_match = re.search(r'\\begin\{frame\}\{([^}]+)\}', combined)
         title = title_match.group(1).strip() if title_match else 'Lecture Slides'
 
-        # FIX: Slide numbering
-        # - \titlepage frame uses [plain,noframenumbering] so the title slide
-        #   is excluded from the slide counter entirely.
-        # - Content frames start at 1/N correctly without any manual offset.
-        # - The footline in SlideBuilderAgent already shows \insertframenumber /
-        #   \inserttotalframenumber — this fix ensures the title page doesn't
-        #   consume frame number 1, which would make every content slide show
-        #   the wrong total (e.g. "2/15" instead of "1/14").
         return (
             rf"""\documentclass[t]{{beamer}}
 
@@ -199,7 +195,7 @@ class LatexAgent:
 
 \begin{{document}}
 
-\begin{{frame}}[plain,noframenumbering]
+\begin{{frame}}
     \titlepage
 \end{{frame}}
 

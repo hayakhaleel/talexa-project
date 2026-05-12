@@ -16,8 +16,8 @@ doc_text = extracted text from a textbook or lecture material.
 
 HEADINGS:
 Headings may appear as numbered sections such as:
-2.1 Agents and Environments
-3.2 Rational Agents
+2.1 Data Architecture
+3.2 Distributed Processing
 
 Treat these as section headings.
 
@@ -39,6 +39,7 @@ CONTENT RULES:
 
 1. Preserve the original section order.
 2. Do NOT invent headings.
+2a. Do NOT copy example topics from this prompt into the output.
 3. Keep all key definitions and terminology.
 4. Keep examples that explain concepts.
 5. Keep important explanations and reasoning.
@@ -47,6 +48,7 @@ CONTENT RULES:
 8. Do NOT output JSON.
 9. Do NOT use code blocks.
 10. Output Markdown text only.
+11. Stay strictly within the source topic; do not introduce unrelated content from AI, agents, or any previous run unless it appears in the input.
 
 
 COMPRESSION TARGET:

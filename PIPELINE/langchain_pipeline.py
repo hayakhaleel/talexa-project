@@ -1,4 +1,4 @@
- slidfrom __future__ import annotations
+from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
@@ -145,7 +145,6 @@ def build_textbook_pipeline(
             subtitles_json_path=speech_input_path,
             ref_audio_path=state["audio_path"],
             output_dir=str(audio_output_dir),
-            language=language,
         )
         speech_agent.run()
 
@@ -309,7 +308,6 @@ def build_slides_pipeline(
             subtitles_json_path=speech_input_path,
             ref_audio_path=state["audio_path"],
             output_dir=str(audio_output_dir),
-            language=language,
         )
         speech_agent.run()
 

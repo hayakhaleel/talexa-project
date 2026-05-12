@@ -316,20 +316,24 @@ class SlideBuilderAgent:
             return "\n".join([result.stdout, result.stderr])
         except subprocess.CalledProcessError as e:
             print(f"Compilation failed with {compiler_name}:")
-            print(e.stderr)
-            return e.stderr or e.stdout
+            # pdflatex writes errors to stdout, not stderr.
+            # Always return stdout+stderr so has_fatal_latex_error can see the errors.
+            full_output = "\n".join(filter(None, [e.stdout, e.stderr]))
+            print(full_output[-2000:])   # show tail for debugging
+            return full_output
 
     def has_fatal_latex_error(self, feedback):
         if not feedback:
             return False
 
         fatal_patterns = [
-            r"(?im)^! .*error",
+            r"(?im)^! .*",                          # any ! error line
             r"(?im)^! Undefined control sequence\.",
             r"(?im)^error:",
             r"(?im)emergency stop",
             r"(?im)fatal error occurred",
             r"(?im)no output pdf file produced",
+            r"(?im)compilation failed",              # our own print message
         ]
         return any(re.search(pattern, feedback) for pattern in fatal_patterns)
 
@@ -352,6 +356,29 @@ class SlideBuilderAgent:
         )
 
         code = self.extract_beamer_code(content)
+
+        # FIX: LLM sometimes returns only the corrected frames without the full
+        # \documentclass...\end{document} wrapper. extract_beamer_code returns None
+        # in that case, causing correcte_error to return None, the fix loop to break
+        # immediately, and the pipeline to crash. If extraction failed, wrap the raw
+        # LLM response in the original document shell instead of giving up.
+        if code is None:
+            # Strip markdown fences if present
+            raw = re.sub(r'```(?:latex)?', '', content, flags=re.IGNORECASE)
+            raw = raw.replace('```', '').strip()
+            # Re-use the preamble from the original broken code and swap in the new frames
+            head_match = re.search(
+                r'(\\documentclass(?:\[[^\]]*\])?\{beamer\}.*?\\begin\{document\})',
+                beamer_code,
+                flags=re.DOTALL,
+            )
+            if head_match:
+                code = head_match.group(1) + '\n' + raw + '\n\\end{document}'
+            else:
+                # Can't recover — return the original code unchanged so the loop
+                # tries the next attempt rather than breaking immediately
+                return beamer_code
+
         code = self.apply_visual_design(code)
         return self.flatten_deep_itemize(code)
 
@@ -688,8 +715,13 @@ class SlideBuilderAgent:
 
         need_improve_list = sorted(set(need_improve_list))
         if not need_improve_list:
-            print("No image layout overfull warnings detected; keeping the compiled PDF.")
-            return beamer_save_path.replace(".tex", ".pdf")
+            pdf_path = beamer_save_path.replace(".tex", ".pdf")
+            from pathlib import Path as _Path
+            if _Path(pdf_path).exists():
+                print("No image layout overfull warnings detected; keeping the compiled PDF.")
+            else:
+                print("[SlideBuilderAgent] No overfull warnings but PDF missing — compilation failed.")
+            return pdf_path
 
         proposal_tmp_dir = path.join("Data", "intermediate", "proposal_imgs")
         os.makedirs(proposal_tmp_dir, exist_ok=True)
@@ -913,6 +945,15 @@ class SlideBuilderAgent:
             final_pdf = self.improve_layout(code, feedback, beamer_save_path)
         else:
             final_pdf = beamer_save_path.replace(".tex", ".pdf")
+
+        # FIX: after the fix loop, the PDF may still not exist (e.g. all fix
+        # attempts failed or correcte_error returned non-string and broke early).
+        # Crashing inside render_pdf_pages with FileNotFoundError is confusing —
+        # return None here so the pipeline can handle the failure gracefully.
+        if not Path(final_pdf).exists():
+            print(f"[SlideBuilderAgent] PDF was not produced: {final_pdf}")
+            print("[SlideBuilderAgent] All fix attempts exhausted. Returning None.")
+            return None
 
         if intermediate_image_dir is None:
             raise ValueError("intermediate_image_dir must be provided")
