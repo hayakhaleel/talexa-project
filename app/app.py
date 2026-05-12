@@ -443,12 +443,15 @@ def upload_page(environ, user, notice=""):
     session_record = get_session_record(session_id) if session_id else None
     session_status = str(session_record["status"]) if session_record else ""
     slides_output, video_output = existing_output_paths(session_id)
-    session_chip = f'<div class="session-chip"><span class="session-chip-dot"></span>Session #{session_id} &mdash; Active</div>' if session_id else ""
+    session_chip = ""
     waiting_block = ""
     refresh_seconds = None
     if video_output and video_output.exists():
         waiting_block = ""
         refresh_seconds = None
+    elif session_status == "completed":
+        waiting_block = '<div class="generation-status working">Lecture ready &mdash; locating your files&hellip;</div>'
+        refresh_seconds = 5
     elif session_status == "assembling":
         waiting_block = '<div class="generation-status working">Assembling your lecture video&hellip;</div>'
         refresh_seconds = 20
