@@ -8,11 +8,6 @@ from collections import Counter, defaultdict
 
 from Prompts.summary_prompt import SUMMARY_PROMPT
 
-# ---------------------------------------------------------------------------
-# Tuning constants
-# ---------------------------------------------------------------------------
-# FIX 1: Lowered from 120 → 40 so short but valid slide content isn't discarded.
-# Presentation slides are concise by nature — 120 chars excluded legitimate slides.
 MIN_SECTION_CHARS  = 40
 MAX_CHUNK_CHARS    = 6000  # max chars sent to the LLM in a single call
 HEADING_CHAR_LIMIT = 500   # a font cluster with more chars than this is body, not headings
@@ -32,9 +27,7 @@ class SummaryAgent:
         self.model_name    = model_name
         self.base_data_dir = base_data_dir
 
-    # -----------------------------------------------------------------------
-    # PUBLIC ENTRY POINT
-    # -----------------------------------------------------------------------
+
     def run(self, pdf_path, output_txt_path=None, max_pages=None):
         if not os.path.exists(pdf_path):
             raise FileNotFoundError(f"PDF not found: {pdf_path}")
@@ -55,31 +48,11 @@ class SummaryAgent:
         print("Summary agent completed successfully.")
         return output_txt_path
 
-    # -----------------------------------------------------------------------
-    # INCREMENTAL-REVEAL DEDUPLICATION
-    # -----------------------------------------------------------------------
     def _deduplicate_incremental_pages(self, doc, max_pages):
-        """
-        Collapses animation build groups (where slide N+1 is a strict superset
-        of slide N) into only the final page of each group.
-
-        FIX 2 (was the main bug): The original check used Python's `in` operator:
-            page_texts[i] in page_texts[i + 1]
-        This is a SUBSTRING check, not a semantic "is subset of" check.
-        Short slides like "Introduction" were being found inside longer slides
-        like "Introduction to PySpark and its role in..." and incorrectly dropped.
-
-        The fix: only deduplicate when the earlier page's text is a proper prefix
-        of the next page's text AND the texts differ by meaningful new content
-        (at least MIN_NEW_CHARS characters added). This correctly handles
-        animation exports (where each step adds exactly one bullet) while
-        preserving distinct slides that happen to share an opening phrase.
-        """
         MIN_NEW_CHARS = 30  # next slide must add at least this many chars to count as a build step
 
         n = len(doc) if max_pages is None else min(len(doc), max_pages)
 
-        # Extract normalised text for each page (whitespace-collapsed)
         page_texts = []
         for i in range(n):
             raw = doc[i].get_text("text")
@@ -89,12 +62,6 @@ class SummaryAgent:
         keep = []
         i = 0
         while i < n:
-            # Only skip page[i] if ALL of these hold:
-            #   1. page[i]'s text is a true prefix of page[i+1]'s text
-            #   2. page[i+1] adds at least MIN_NEW_CHARS of new content
-            # This means "Introduction" does NOT match inside
-            # "Introduction to PySpark..." because it is not a prefix
-            # followed by a space/punctuation boundary.
             while i + 1 < n and self._is_incremental_build(
                 page_texts[i], page_texts[i + 1], MIN_NEW_CHARS
             ):
@@ -111,18 +78,6 @@ class SummaryAgent:
         return keep
 
     def _is_incremental_build(self, text_a: str, text_b: str, min_new: int) -> bool:
-        """
-        Return True only if text_b is an extension of text_a:
-          - text_b starts with text_a (prefix check, not substring)
-          - text_b is longer by at least min_new characters
-          - the character immediately after text_a in text_b is whitespace
-            or punctuation (word-boundary check prevents false matches like
-            "Introduction" being a prefix of "Introduction to PySpark")
-
-        This is stricter than the original `text_a in text_b` substring test
-        and correctly identifies animation build steps without conflating
-        separate slides that share an opening word or phrase.
-        """
         if not text_a:
             return False
         if not text_b.startswith(text_a):
@@ -137,27 +92,14 @@ class SummaryAgent:
             return False
         return True
 
-    # -----------------------------------------------------------------------
-    # STEP 1 — two-pass font-aware extraction (zero hardcoded font names)
-    # -----------------------------------------------------------------------
-    def extract_sections(self, pdf_path, max_pages=None):
-        """
-        Pass 0: deduplicate incremental-reveal pages (animation exports).
-        Pass 1: survey all spans to compute body font size and per-cluster
-                char counts (used to distinguish headings from sidebar body).
-        Pass 2: classify each span using only size, flags, and cluster stats.
-        Pass 3: group classified spans into labelled sections.
 
-        Returns: [{"heading": str, "body": str}, ...]
-        """
+    def extract_sections(self, pdf_path, max_pages=None):
         doc       = fitz.open(pdf_path)
         num_pages = len(doc)
         n         = num_pages if max_pages is None else min(num_pages, max_pages)
 
-        # ---- Pass 0: deduplicate incremental slides -------------------------
         keep_indices = self._deduplicate_incremental_pages(doc, max_pages)
 
-        # ---- Pass 1: survey (only kept pages) ------------------------------
         size_counter  = Counter()
         cluster_chars = defaultdict(int)
         all_spans     = []
@@ -197,7 +139,6 @@ class SummaryAgent:
             f"({len(keep_indices)} logical slide(s) after deduplication)"
         )
 
-        # ---- Pass 2 + 3: classify and group --------------------------------
         sections = self._classify_and_group(all_spans, body_size, cluster_chars)
 
         if not sections:
@@ -212,9 +153,6 @@ class SummaryAgent:
 
         return sections
 
-    # -----------------------------------------------------------------------
-    # STEP 2 — classify + group (single pass over spans)
-    # -----------------------------------------------------------------------
     def _classify_and_group(self, all_spans, body_size, cluster_chars):
         sections         = []
         current_heading  = "Introduction"
@@ -269,9 +207,6 @@ class SummaryAgent:
 
         return sections
 
-    # -----------------------------------------------------------------------
-    # STEP 3 — span classifier
-    # -----------------------------------------------------------------------
     def _classify_span(self, span, body_size, cluster_chars,
                        has_pending_number=False):
         text   = span["text"]
@@ -315,9 +250,6 @@ class SummaryAgent:
 
         return "body"
 
-    # -----------------------------------------------------------------------
-    # Body assembly
-    # -----------------------------------------------------------------------
     def _assemble_body(self, span_list):
         if not span_list:
             return ""
@@ -329,9 +261,7 @@ class SummaryAgent:
         joined = re.sub(r"  +", " ", joined)
         return joined.strip()
 
-    # -----------------------------------------------------------------------
-    # STEP 4 — summarise each section
-    # -----------------------------------------------------------------------
+
     def summarize_sections(self, sections):
         all_summaries = []
         total = len(sections)
@@ -372,9 +302,6 @@ class SummaryAgent:
         )
         return response["message"]["content"].strip()
 
-    # -----------------------------------------------------------------------
-    # Helpers
-    # -----------------------------------------------------------------------
     def _chunk_text(self, text, max_chars):
         if len(text) <= max_chars:
             return [text]
@@ -403,8 +330,6 @@ class SummaryAgent:
             f.write(text)
         print(f"[SummaryAgent] Summary saved to: {path}")
 
-
-# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     agent = SummaryAgent(model_name="qwen2.5:7b")
     result_path = agent.run(
