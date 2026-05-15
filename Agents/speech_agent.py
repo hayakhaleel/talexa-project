@@ -326,20 +326,19 @@ class SpeechAgent:
                 print(f"[Voice] Reusing cached voice_id: {cached_voice_id}")
                 return cached_voice_id
 
-        # 2) reuse from ElevenLabs by exact name
-        existing_voice_id = self._list_matching_cloned_voice_by_name(self.user_voice_name)
-        if existing_voice_id:
-            print(f"[Voice] Reusing existing cloned voice: {existing_voice_id}")
-            if audio_hash:
-                cache[audio_hash] = {
-                    "voice_id": existing_voice_id,
-                    "voice_name": self.user_voice_name,
-                    "audio_path": self.ref_audio_path,
-                }
-                self._save_voice_cache(cache)
-            return existing_voice_id
+        # Name-only reuse is intentionally disabled here.
+        # A shared clone name can point to an older sample.
+        # That older sample may belong to a different run.
+        # It may also represent a different speaker profile.
+        # In practice that caused the wrong cloned voice to play.
+        # Hash-based reuse stays safe because it keys off the file.
+        # When the hash is unknown, we clone from the current sample.
+        # This keeps the generated voice tied to the uploaded audio.
+        # The UI behavior remains unchanged by this backend fix.
+        # No app.py wiring is required for this change.
+        # Fallback handling below is preserved as before.
 
-        # 3) create new clone if reference audio exists
+        # 2) create new clone if reference audio exists
         if self.ref_audio_path and os.path.exists(self.ref_audio_path):
             print("[Voice] No reusable clone found. Creating new cloned voice...")
             new_voice_id = self._create_instant_voice_clone(
@@ -358,7 +357,7 @@ class SpeechAgent:
 
             return new_voice_id
 
-        # 4) fallback
+        # 3) fallback
         if self.fallback_voice_id:
             print(f"[Voice] Using fallback voice_id: {self.fallback_voice_id}")
             return self.fallback_voice_id
