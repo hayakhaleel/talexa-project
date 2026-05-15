@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import cgi
+import json
 import os
 import shutil
 import sys
@@ -182,6 +183,14 @@ def html_response(environ, start_response, html_text, status="200 OK", extra_hea
     headers = [("Content-Type", "text/html; charset=utf-8"), ("Content-Length", str(len(body)))]
     if extra_headers:
         headers.extend(extra_headers)
+    headers.extend(security_headers(environ))
+    start_response(status, headers)
+    return [body]
+
+
+def json_response(environ, start_response, payload, status="200 OK"):
+    body = json.dumps(payload).encode("utf-8")
+    headers = [("Content-Type", "application/json; charset=utf-8"), ("Content-Length", str(len(body)))]
     headers.extend(security_headers(environ))
     start_response(status, headers)
     return [body]
@@ -440,30 +449,11 @@ def terms_page(user, notice=""):
 
 def upload_page(environ, user, notice=""):
     session_id = query_int(environ, "session_id")
-    session_record = get_session_record(session_id) if session_id else None
-    session_status = str(session_record["status"]) if session_record else ""
-    slides_output, video_output = existing_output_paths(session_id)
+    session_ui = get_session_ui_state(session_id)
     session_chip = ""
-    waiting_block = ""
-    refresh_seconds = None
-    if video_output and video_output.exists():
-        waiting_block = ""
-        refresh_seconds = None
-    elif session_status == "completed":
-        waiting_block = '<div class="generation-status working">Lecture ready &mdash; locating your files&hellip;</div>'
-        refresh_seconds = 5
-    elif session_status == "assembling":
-        waiting_block = '<div class="generation-status working">Assembling your lecture video&hellip;</div>'
-        refresh_seconds = 20
-    elif session_status == "processing":
-        waiting_block = '<div class="generation-status working">Generating lecture assets&hellip; this page updates automatically.</div>'
-        refresh_seconds = 20
-    elif session_status == "failed":
-        waiting_block = '<div class="generation-status error">Generation failed. Please try again.</div>'
-    elif session_id:
-        waiting_block = '<div class="generation-status working">Generating&hellip; checking for your lecture video.</div>'
-        refresh_seconds = 20
-    download_links = render_downloads(session_id, slides_output, video_output)
+    waiting_block = session_ui["waiting_block"]
+    download_links = session_ui["download_links"]
+    auto_refresh_enabled = "true" if session_id else "false"
     body = f"""
     <main class="upload-page">
       {session_chip}
@@ -522,10 +512,13 @@ def upload_page(environ, user, notice=""):
             </div>
             <button type="submit" class="button primary big" id="gen-btn">Generate Lecture &rarr;</button>
           </form>
-          {waiting_block}
-          {download_links}
+          <div id="generation-status-region">{waiting_block}</div>
+          <div id="download-links-region">{download_links}</div>
           <script>
             var files = {{pdf:false,img:false,wav:false}};
+            var sessionId = {json.dumps(session_id)};
+            var shouldPollSession = {auto_refresh_enabled};
+            var sessionPollingHandle = null;
             function markFile(key, inp) {{
               if (inp.files && inp.files.length > 0) {{
                 files[key] = true;
@@ -544,12 +537,37 @@ def upload_page(environ, user, notice=""):
               btn.textContent = 'Generating\u2026'; btn.disabled = true; btn.style.opacity = '0.6';
               return true;
             }}
+            async function refreshGenerationState() {{
+              if (!shouldPollSession || !sessionId) return;
+              try {{
+                var response = await fetch('/session-status?session_id=' + encodeURIComponent(sessionId), {{
+                  headers: {{ 'Accept': 'application/json' }},
+                  cache: 'no-store'
+                }});
+                if (!response.ok) return;
+                var payload = await response.json();
+                var waiting = document.getElementById('generation-status-region');
+                var downloads = document.getElementById('download-links-region');
+                if (waiting) waiting.innerHTML = payload.waiting_block || '';
+                if (downloads) downloads.innerHTML = payload.download_links || '';
+                if (payload.done && sessionPollingHandle) {{
+                  window.clearInterval(sessionPollingHandle);
+                  sessionPollingHandle = null;
+                }}
+              }} catch (error) {{
+                console.warn('Unable to refresh session state.', error);
+              }}
+            }}
+            if (shouldPollSession && sessionId) {{
+              sessionPollingHandle = window.setInterval(refreshGenerationState, 5000);
+              window.setTimeout(refreshGenerationState, 1000);
+            }}
           </script>
         </section>
       </section>
     </main>
     """
-    return page_layout("TALEXA \u2014 Generate", body, user=user, notice=notice, refresh_seconds=refresh_seconds)
+    return page_layout("TALEXA \u2014 Generate", body, user=user, notice=notice)
 
 
 def render_downloads(session_id, slides_output, video_output):
@@ -563,6 +581,55 @@ def render_downloads(session_id, slides_output, video_output):
     if not links:
         return ""
     return f'<div class="download-stack">{"".join(links)}</div>'
+
+
+def get_session_ui_state(session_id):
+    if not session_id:
+        return {
+            "status": "",
+            "waiting_block": "",
+            "download_links": "",
+            "done": False,
+        }
+
+    session_record = get_session_record(session_id)
+    session_status = str(session_record["status"]) if session_record else ""
+    slides_output, video_output = existing_output_paths(session_id)
+
+    if video_output and video_output.exists():
+        waiting_block = '<div class="generation-status success">Lecture video is ready.</div>'
+        done = True
+    elif session_status == "completed":
+        waiting_block = '<div class="generation-status working">Lecture ready &mdash; locating your files&hellip;</div>'
+        done = False
+    elif session_status == "assembling":
+        waiting_block = '<div class="generation-status working">Assembling your lecture video&hellip;</div>'
+        done = False
+    elif session_status == "processing":
+        waiting_block = '<div class="generation-status working">Generating lecture assets&hellip; this page updates automatically.</div>'
+        done = False
+    elif session_status == "failed":
+        waiting_block = '<div class="generation-status error">Generation failed. Please try again.</div>'
+        done = True
+    else:
+        waiting_block = '<div class="generation-status working">Generating&hellip; checking for your lecture video.</div>'
+        done = False
+
+    return {
+        "status": session_status,
+        "waiting_block": waiting_block,
+        "download_links": render_downloads(session_id, slides_output, video_output),
+        "done": done,
+    }
+
+
+def handle_session_status(environ, start_response):
+    user = require_login(environ, start_response)
+    if not user:
+        return [b""]
+
+    session_id = query_int(environ, "session_id")
+    return json_response(environ, start_response, get_session_ui_state(session_id))
 
 
 def handle_login(environ, start_response):
@@ -861,6 +928,8 @@ def application(environ, start_response):
             if not user:
                 return [b""]
             return html_response(environ, start_response, upload_page(environ, user, query_notice(environ)))
+        if path == "/session-status":
+            return handle_session_status(environ, start_response)
         if path == "/generate" and method == "POST":
             return handle_generate(environ, start_response)
         if path == "/download/slides":
