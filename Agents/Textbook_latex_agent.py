@@ -8,7 +8,7 @@ import ollama
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-
+#loads latex proompt
 def _load_latex_prompt():
     prompt_file = Path(__file__).resolve().parents[1] / "Prompts" / "latex_prompt.py"
     namespace = {}
@@ -18,6 +18,7 @@ def _load_latex_prompt():
 
 LATEX_PROMPT = _load_latex_prompt()
 
+#each model call is 4000 tokens 
 CHUNK_SIZE = 4000  # max chars per LLM call
 
 
@@ -26,9 +27,7 @@ class LatexAgent:
     def __init__(self, model="qwen2.5:7b"):
         self.model = model
 
-    # -----------------------------------------------------------------------
-    # PUBLIC ENTRY POINT
-    # -----------------------------------------------------------------------
+
     def run(
         self,
         pdf_name=None,
@@ -69,9 +68,6 @@ class LatexAgent:
         print("Agent failed after multiple attempts.")
         return None
 
-    # -----------------------------------------------------------------------
-    # GENERATION
-    # -----------------------------------------------------------------------
     def generate_latex(self, summary_path):
         if not os.path.exists(summary_path):
             raise FileNotFoundError(f"Summary file not found: {summary_path}")
@@ -100,34 +96,20 @@ class LatexAgent:
 
         return self._assemble_document(all_frames)
 
-    # -----------------------------------------------------------------------
-    # CLEANING — fixes every known LLM output error before compilation
-    # -----------------------------------------------------------------------
+    
     def _clean_frames(self, text):
-        """
-        Fix all known failure patterns produced by qwen2.5:7b:
+    
 
-        1. Markdown bold (**text**) → \\textbf{text}
-        2. Missing backslash on item  ("item foo" → "\\item foo")
-        3. \\begin{verbatim}...\\end{verbatim} inside beamer → \\texttt{}
-           (verbatim is illegal inside beamer frames)
-        4. Markdown dash bullets ("  - text") → \\item text
-        5. Unescaped & in non-command lines
-        6. Strip markdown code fences (```latex ... ```)
-        7. Fix unbalanced \\begin{frame}/\\end{frame} pairs
-        """
-
-        # ── Strip markdown fences ──────────────────────────────────────────
+        # ── Strip markdown fences
         text = re.sub(r'```(?:latex)?', '', text, flags=re.IGNORECASE)
         text = text.replace('```', '').strip()
 
-        # ── 1. Markdown bold → \textbf ─────────────────────────────────────
+        # ── 1. Markdown bold to LaTeX bold
         text = re.sub(r'\*\*(.+?)\*\*', r'\\textbf{\1}', text)
 
-        # ── 2. Missing backslash on \item ──────────────────────────────────
+        # ── 2. Missing backslash on \item 
         text = re.sub(r'(?m)^(\s*)(?<!\\)item\b', r'\1\\item', text)
 
-        # ── 3. Replace \begin{verbatim}...\end{verbatim} with \texttt{} ────
         def replace_verbatim(m):
             content = m.group(1).strip()
             content = content.replace('\\', '\\textbackslash{}')
@@ -164,7 +146,7 @@ class LatexAgent:
             fixed.append(line)
         text = '\n'.join(fixed)
 
-        # ── 6. Fix unbalanced frame tags ────────────────────────────────────
+        # ── 6. Fix unbalanced frame tags
         begin_count = text.count(r'\begin{frame}')
         end_count   = text.count(r'\end{frame}')
         if begin_count > end_count:
@@ -172,9 +154,7 @@ class LatexAgent:
 
         return text.strip()
 
-    # -----------------------------------------------------------------------
-    # ASSEMBLY — wraps frames in a complete compilable Beamer document
-    # -----------------------------------------------------------------------
+   
     def _assemble_document(self, frames_list):
         combined = '\n\n'.join(frames_list)
 
@@ -182,14 +162,6 @@ class LatexAgent:
         title_match = re.search(r'\\begin\{frame\}\{([^}]+)\}', combined)
         title = title_match.group(1).strip() if title_match else 'Lecture Slides'
 
-        # FIX: Slide numbering
-        # - \titlepage frame uses [plain,noframenumbering] so the title slide
-        #   is excluded from the slide counter entirely.
-        # - Content frames start at 1/N correctly without any manual offset.
-        # - The footline in SlideBuilderAgent already shows \insertframenumber /
-        #   \inserttotalframenumber — this fix ensures the title page doesn't
-        #   consume frame number 1, which would make every content slide show
-        #   the wrong total (e.g. "2/15" instead of "1/14").
         return (
             rf"""\documentclass[t]{{beamer}}
 
@@ -208,9 +180,7 @@ class LatexAgent:
             + '\n\n\\end{document}\n'
         )
 
-    # -----------------------------------------------------------------------
-    # HELPERS
-    # -----------------------------------------------------------------------
+ 
     def escape_latex(self, text):
         """Escape characters that are dangerous in LaTeX prose but not in commands."""
         replacements = {
