@@ -15,7 +15,7 @@ class SubtitleFocusAgent:
 
     def __init__(
         self,
-        model_name="qwen2.5vl:7b",
+        model_name="qwen3-vl:8b",
         output_path="Data/intermediate/subtitles.json",
         max_retries=3,
     ):
