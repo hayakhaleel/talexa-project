@@ -13,7 +13,7 @@ from Prompts.summary_prompt import SUMMARY_PROMPT
 MIN_SECTION_CHARS  = 40
 MAX_CHUNK_CHARS    = 6000  # send only 6000 characters to the LLM at once, to prevent hallucinations
 HEADING_CHAR_LIMIT = 500   # a font cluster with more chars than this is body, not headings
-PAGES_PER_CHUNK    = 5     # fallback when no headings detected at all
+
 
 
 MONO_FONTS = (
