@@ -1,17 +1,17 @@
-import argparse
-import glob
-import hashlib
-import json
-import mimetypes
+import argparse #to read command line 
+import glob #to search for files
+import hashlib #to hash the image to make sure if the image exists or no
+import json #o deal with json 
+import mimetypes #used to detect file content
 import os
 import re
-import subprocess
-import tempfile
+import subprocess #to run extrenal libraries
+import tempfile #to reate temporary files
 import time
 import urllib.error
-import urllib.parse
+import urllib.parse #handeling requests
 import urllib.request
-from pathlib import Path
+from pathlib import Path # to read paths
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from PIL import Image, ImageOps
@@ -23,13 +23,13 @@ class TalkingHeadApiAgent:
         audio_dir: str,
         output_dir: str = "Data/intermediate/talking_head_api",
         api_key: Optional[str] = None,
-        ffmpeg_binary: str = "ffmpeg",
-        title: str = "Talking Head API Video",
-        poll_interval_seconds: int = 10,
-        timeout_seconds: int = 7200,
-        use_avatar_iv_model: bool = True,
-        max_image_side: int = 1536,
-        jpeg_quality: int = 95,
+        ffmpeg_binary: str = "ffmpeg", #stores the ffmpeg command name
+        title: str = "Talking Head API Video", #stores video title
+        poll_interval_seconds: int = 10, #how many seconds to wait between each status 
+        timeout_seconds: int = 7200, #max waiting before stopping
+        use_avatar_iv_model: bool = True, #use the heygen model bool
+        max_image_side: int = 1536, #max resolution
+        jpeg_quality: int = 95, #quality when saving the image prepared
     ):
         self.source_image = os.path.abspath(source_image)
         self.audio_dir = os.path.abspath(audio_dir)
@@ -45,27 +45,27 @@ class TalkingHeadApiAgent:
 
         os.makedirs(self.output_dir, exist_ok=True)
 
-        self.merged_wav_path = os.path.join(self.output_dir, "merged_slides.wav")
-        self.upload_mp3_path = os.path.join(self.output_dir, "merged_slides_upload.mp3")
-        self.prepared_image_path = os.path.join(self.output_dir, "prepared_source.jpg")
-        self.output_video_path = os.path.join(self.output_dir, "talking_head.mp4")
+        self.merged_wav_path = os.path.join(self.output_dir, "merged_slides.wav") #where the merged audio will will be saved
+        self.upload_mp3_path = os.path.join(self.output_dir, "merged_slides_upload.mp3") #where the mp3 version will be saved
+        self.prepared_image_path = os.path.join(self.output_dir, "prepared_source.jpg") #where the cleaned image will be saved
+        self.output_video_path = os.path.join(self.output_dir, "talking_head.mp4") #where the final talking head video will be saved
         self.cache_path = os.path.join(self.output_dir, "avatar_cache.json")
-        self.debug_dir = os.path.join(self.output_dir, "debug")
+        self.debug_dir = os.path.join(self.output_dir, "debug") #where the responses will be saved
         os.makedirs(self.debug_dir, exist_ok=True)
 
-    def _require_api_key(self) -> None:
+    def _require_api_key(self) -> None: #checks if api key exists
         if not self.api_key:
             raise ValueError(
                 "HeyGen API key is required. Pass api_key=... or set HEYGEN_API_KEY."
             )
 
-    def _require_inputs(self) -> None:
+    def _require_inputs(self) -> None: #checks if the image exists
         if not os.path.exists(self.source_image):
             raise FileNotFoundError(f"Source image not found: {self.source_image}")
         if not os.path.isdir(self.audio_dir):
             raise FileNotFoundError(f"Audio directory not found: {self.audio_dir}")
 
-    def _run_ffmpeg(self, args: List[str]) -> None:
+    def _run_ffmpeg(self, args: List[str]) -> None: #runs the ffmpeg command
         cmd = [self.ffmpeg_binary, *args]
         print("[FFmpeg]", " ".join(cmd))
         subprocess.run(cmd, check=True)
