@@ -70,7 +70,7 @@ class TalkingHeadApiAgent:
         print("[FFmpeg]", " ".join(cmd))
         subprocess.run(cmd, check=True)
 
-    def _natural_sort_key(self, path: str) -> List[Any]:
+    def _natural_sort_key(self, path: str) -> List[Any]: #sorts the audios
         parts = re.split(r"(\d+)", Path(path).name.lower())
         key: List[Any] = []
         for part in parts:
@@ -134,19 +134,19 @@ class TalkingHeadApiAgent:
                         "-y",
                         "-i",
                         audio_path,
-                        "-ac",
+                        "-ac", #mono audio
                         "1",
                         "-ar",
-                        "44100",
+                        "44100", #hz sample rate
                         "-c:a",
-                        "pcm_s16le",
+                        "pcm_s16le", #wav codec
                         normalized_path,
                     ]
                 )
                 normalized_files.append(normalized_path)
 
             silence_path = os.path.join(temp_dir, "silence_1s.wav")
-            self._run_ffmpeg(
+            self._run_ffmpeg( #generates the silence 
                 [
                     "-y",
                     "-f",
@@ -166,11 +166,11 @@ class TalkingHeadApiAgent:
                 for index, normalized_path in enumerate(normalized_files):
                     normalized_for_ffmpeg = normalized_path.replace("\\", "/").replace("'", "'\\''")
                     handle.write(f"file '{normalized_for_ffmpeg}'\n")
-                    if index < len(normalized_files) - 1:
+                    if index < len(normalized_files) - 1: #if not the last file add silence
                         silence_for_ffmpeg = silence_path.replace("\\", "/").replace("'", "'\\''")
                         handle.write(f"file '{silence_for_ffmpeg}'\n")
 
-            self._run_ffmpeg(
+            self._run_ffmpeg( #merges all audios
                 [
                     "-y",
                     "-f",
@@ -196,7 +196,7 @@ class TalkingHeadApiAgent:
                 wav_path,
                 "-codec:a",
                 "libmp3lame",
-                "-q:a",
+                "-q:a", #mp3 specification
                 "2",
                 self.upload_mp3_path,
             ]
@@ -204,24 +204,25 @@ class TalkingHeadApiAgent:
         print(f"[TalkingHeadAPI] Upload MP3 saved to: {self.upload_mp3_path}")
         return self.upload_mp3_path
 
-    def prepare_image(self) -> Tuple[str, str]:
+    def prepare_image(self) -> Tuple[str, str]: #image preprocessing
         image = Image.open(self.source_image)
-        image = ImageOps.exif_transpose(image).convert("RGB")
+        image = ImageOps.exif_transpose(image).convert("RGB") #converts to rgb
 
         width, height = image.size
         max_side = max(width, height)
         if max_side > self.max_image_side:
-            scale = self.max_image_side / float(max_side)
+            scale = self.max_image_side / float(max_side) #rescales the image to match requirement
             new_size = (max(1, int(width * scale)), max(1, int(height * scale)))
             image = image.resize(new_size, Image.LANCZOS)
 
         image.save(self.prepared_image_path, format="JPEG", quality=self.jpeg_quality, optimize=True)
 
-        image_hash = self._hash_file(self.prepared_image_path)
+        image_hash = self._hash_file(self.prepared_image_path) #hashes the image
         print(f"[TalkingHeadAPI] Prepared image saved to: {self.prepared_image_path}")
         print(f"[TalkingHeadAPI] Prepared image hash: {image_hash}")
         return self.prepared_image_path, image_hash
 
+    #send request to api
     def _http_json(
         self,
         method: str,
@@ -230,22 +231,22 @@ class TalkingHeadApiAgent:
         headers: Optional[Dict[str, str]] = None,
         body: Optional[bytes] = None,
     ) -> Dict[str, Any]:
-        request = urllib.request.Request(url, data=body, method=method)
-        request.add_header("X-Api-Key", self.api_key or "")
+        request = urllib.request.Request(url, data=body, method=method) #creates http request
+        request.add_header("X-Api-Key", self.api_key or "") #adds api key
         for key, value in (headers or {}).items():
-            request.add_header(key, value)
+            request.add_header(key, value) #adds to each header
 
         try:
-            with urllib.request.urlopen(request, timeout=120) as response:
-                content = response.read().decode("utf-8")
+            with urllib.request.urlopen(request, timeout=120) as response: #sends the request
+                content = response.read().decode("utf-8") #reads the output to see status
                 status_code = getattr(response, "status", 200)
-        except urllib.error.HTTPError as exc:
+        except urllib.error.HTTPError as exc: #if anything but 200, send message
             details = exc.read().decode("utf-8", errors="replace")
             try:
-                payload = json.loads(details)
+                payload = json.loads(details) #cwrite response to json
             except Exception:
                 payload = {"raw_text": details}
-            self._save_debug_json(
+            self._save_debug_json( #error handeling
                 f"http_error_{method.lower()}_{Path(urllib.parse.urlparse(url).path).name or 'root'}.json",
                 {
                     "url": url,
@@ -277,7 +278,7 @@ class TalkingHeadApiAgent:
         )
         return payload
 
-    def _extract_first_value(
+    def _extract_first_value( #handles API responses
         self,
         data: Any,
         *,
@@ -285,7 +286,7 @@ class TalkingHeadApiAgent:
     ) -> Optional[Any]:
         preferred_keys = tuple(preferred_keys)
 
-        def walk(node: Any) -> Optional[Any]:
+        def walk(node: Any) -> Optional[Any]: #walks through the nested data to return video ID
             if isinstance(node, dict):
                 for key in preferred_keys:
                     value = node.get(key)
@@ -304,25 +305,27 @@ class TalkingHeadApiAgent:
 
         return walk(data)
 
-    def _extract_video_url(self, data: Any) -> Optional[str]:
+    def _extract_video_url(self, data: Any) -> Optional[str]: #searches for the video link
         candidate = self._extract_first_value(
             data,
             preferred_keys=("video_url", "url", "video_url_without_captions"),
         )
         return candidate if isinstance(candidate, str) and candidate.startswith("http") else None
 
+    #upload image file to heygen 
     def upload_asset_raw(self, file_path: str, content_type: str) -> Dict[str, Any]:
         with open(file_path, "rb") as handle:
             body = handle.read()
 
         print(f"[TalkingHeadAPI] Uploading asset: {file_path} ({content_type})")
-        return self._http_json(
+        return self._http_json( #send post request to upload image
             "POST",
             "https://upload.heygen.com/v1/asset",
             headers={"Content-Type": content_type},
             body=body,
         )
 
+    #return the image id form the api response
     def extract_image_key(self, payload: Dict[str, Any]) -> str:
         data = payload.get("data", {}) if isinstance(payload, dict) else {}
         image_key = data.get("image_key") or data.get("key") or payload.get("image_key")
@@ -330,6 +333,7 @@ class TalkingHeadApiAgent:
             raise RuntimeError(f"Could not find image_key in upload response: {payload}")
         return str(image_key)
 
+    #returns audio id from the api response
     def extract_audio_asset_id(self, payload: Dict[str, Any]) -> str:
         data = payload.get("data", {}) if isinstance(payload, dict) else {}
         audio_asset_id = (
@@ -343,6 +347,7 @@ class TalkingHeadApiAgent:
             raise RuntimeError(f"Could not find audio asset id in upload response: {payload}")
         return str(audio_asset_id)
 
+    #sends request to heygen to create an avatar group 
     def create_photo_avatar_group(self, image_key: str) -> str:
         payload = {"name": self.title, "image_key": image_key}
         response = self._http_json(
@@ -360,6 +365,7 @@ class TalkingHeadApiAgent:
 
         return str(group_id)
 
+    #checks what avatars in the group we created
     def list_avatars_in_group(self, group_id: str) -> List[Dict[str, Any]]:
         response = self._http_json(
             "GET",
@@ -376,6 +382,7 @@ class TalkingHeadApiAgent:
 
         return [avatar for avatar in avatars if isinstance(avatar, dict)]
 
+    #manages the status of the video generation
     def wait_for_avatar_id(self, group_id: str) -> str:
         started = time.time()
         ready_statuses = {"completed", "ready", "trained", "success", "succeeded"}
@@ -400,6 +407,7 @@ class TalkingHeadApiAgent:
 
             time.sleep(self.poll_interval_seconds)
 
+    # check whetrher to use an avatar that is in the cache already or create a new avatar
     def resolve_avatar_id(self) -> str:
         prepared_image_path, image_hash = self.prepare_image()
 
@@ -427,6 +435,7 @@ class TalkingHeadApiAgent:
         return avatar_id
 
 
+    #this function sends request to API to generate a video
     def create_video(self, avatar_id: str, audio_asset_id: str) -> str:
         payload = {
             "title": self.title,
@@ -464,11 +473,13 @@ class TalkingHeadApiAgent:
 
         return str(video_id)
 
+    #sends a request to check the status of the video generation
     def get_video_status(self, video_id: str) -> Dict[str, Any]:
         query = urllib.parse.urlencode({"video_id": video_id})
         url = f"https://api.heygen.com/v1/video_status.get?{query}"
         return self._http_json("GET", url)
 
+    #this keeps checking whether the video finished or no
     def wait_for_video(self, video_id: str) -> str:
         started = time.time()
 
@@ -502,6 +513,7 @@ class TalkingHeadApiAgent:
 
             time.sleep(self.poll_interval_seconds)
 
+    #sends a request to download the lecture video
     def download_file(self, url: str, output_path: str) -> str:
         print(f"[TalkingHeadAPI] Downloading video from: {url}")
         request = urllib.request.Request(url, method="GET")
