@@ -13,14 +13,6 @@ from pydub import AudioSegment
 
 
 class SpeechAgent:
-    """
-    Final Talexa speech agent:
-    - Takes ONE final subtitles JSON path
-    - Takes user reference audio
-    - Reuses existing cloned voice if already created
-    - Creates a new clone only if needed
-    - Generates one WAV per slide
-    """
 
     def __init__(
         self,
@@ -62,9 +54,6 @@ class SpeechAgent:
         print(f"[Reference Audio] {self.ref_audio_path}")
         print(f"[Output Dir] {self.output_dir}")
 
-    # -------------------------------------------------
-    # Voice cache helpers
-    # -------------------------------------------------
     def _load_voice_cache(self) -> Dict[str, Any]:
         if not os.path.exists(self.voice_cache_path):
             return {}
@@ -86,9 +75,7 @@ class SpeechAgent:
                 sha.update(chunk)
         return sha.hexdigest()
 
-    # -------------------------------------------------
-    # Text cleaning / chunking
-    # -------------------------------------------------
+
     def clean_text(self, text: str) -> str:
         if text is None:
             return ""
@@ -326,17 +313,6 @@ class SpeechAgent:
                 print(f"[Voice] Reusing cached voice_id: {cached_voice_id}")
                 return cached_voice_id
 
-        # Name-only reuse is intentionally disabled here.
-        # A shared clone name can point to an older sample.
-        # That older sample may belong to a different run.
-        # It may also represent a different speaker profile.
-        # In practice that caused the wrong cloned voice to play.
-        # Hash-based reuse stays safe because it keys off the file.
-        # When the hash is unknown, we clone from the current sample.
-        # This keeps the generated voice tied to the uploaded audio.
-        # The UI behavior remains unchanged by this backend fix.
-        # No app.py wiring is required for this change.
-        # Fallback handling below is preserved as before.
 
         # 2) create new clone if reference audio exists
         if self.ref_audio_path and os.path.exists(self.ref_audio_path):
