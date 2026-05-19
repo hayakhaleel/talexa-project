@@ -1,0 +1,30 @@
+{
+  "total_score": 3.75,
+  "max_score": 4,
+  "questions": [
+    {
+      "question": "What is the definition of an agent in artificial intelligence?",
+      "answer": "An agent is a software system that perceives its environment through sensors and takes actions to manipulate the environment via effectors.",
+      "vlm_answer": "An agent is a software system that perceives its environment through sensors and takes actions to manipulate the environment via effectors. The primary purpose of such an agent is to either achieve specific objectives or optimize some performance metric, which allows it to operate autonomously and make decisions without constant human intervention.",
+      "score": 1.0
+    },
+    {
+      "question": "What is the core idea behind Reactive Agents?",
+      "answer": "Reactive agents perceive their current state only and react without maintaining any memory of past events.",
+      "vlm_answer": "Reactive agents operate purely on the present moment, meaning they only observe what's happening right now and respond without ever storing any history of past events, similar to how a basic reflex works in the human body.",
+      "score": 1.0
+    },
+    {
+      "question": "What are the two key properties of a rational agent?",
+      "answer": "A rational agent possesses optimality, meaning actions should be chosen to maximize long-term utility, and consistency, meaning beliefs and actions should be logically consistent with each other.",
+      "vlm_answer": "The two key properties of a rational agent are:\n- **Optimality**: Actions should be chosen to maximize long-term utility.\n- **Consistency**: Beliefs and actions should be logically consistent with each other.",
+      "score": 1.0
+    },
+    {
+      "question": "What does 'Performance Doubling' refer to in the context of computer hardware?",
+      "answer": "Performance Doubling illustrates how computational power roughly doubled every 18 months until around 2005, a remarkable pace that shaped the industry's innovation cycle.",
+      "vlm_answer": "The concept of Performance Doubling illustrates how computational power roughly doubled every 18 months, a remarkable pace that shaped the industry's innovation cycle.",
+      "score": 0.75
+    }
+  ]
+}
