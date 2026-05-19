@@ -26,7 +26,7 @@ class TalkingHeadApiAgent:
         ffmpeg_binary: str = "ffmpeg",
         title: str = "Talking Head API Video",
         poll_interval_seconds: int = 10,
-        timeout_seconds: int = 1800,
+        timeout_seconds: int = 7200,
         use_avatar_iv_model: bool = True,
         max_image_side: int = 1536,
         jpeg_quality: int = 95,
