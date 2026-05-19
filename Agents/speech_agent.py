@@ -227,7 +227,8 @@ class SpeechAgent:
         resp = requests.get(url, headers=self.base_headers, timeout=60)
         return resp.status_code == 200
 
-    def _list_matching_cloned_voice_by_name(self, voice_name: str) -> Optional[str]:
+    def _list_matching_cloned_voice_by_name(self, voice_name: str) -> Optional[str]: 
+        ##access the voices database
         url = "https://api.elevenlabs.io/v2/voices"
         params = {
             "page_size": 100,
@@ -284,7 +285,7 @@ class SpeechAgent:
                 headers={"xi-api-key": self.api_key},
                 data=data,
                 files=files,
-                timeout=180,
+                timeout=300,
             )
 
         if resp.status_code >= 400:
