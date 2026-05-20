@@ -8,7 +8,6 @@ from pathlib import Path
 from google import genai
 from google.genai import types
 
-
 API_KEY = os.environ.get("GEMINI_API_KEY")
 if not API_KEY:
     raise EnvironmentError("Missing GEMINI_API_KEY")
@@ -33,7 +32,6 @@ VIDEO_MIME_MAP   = {
     ".mkv":  "video/x-matroska",
     ".webm": "video/webm",
 }
-
 
 def get_pdf_from_output_folder(output_dir="Data/output"):
     folder = Path(output_dir)
@@ -63,7 +61,6 @@ def _parse_json(text: str):
     text = re.sub(r"^```(json)?", "", text.strip())
     text = re.sub(r"```$",        "", text.strip())
     return json.loads(text.strip())
-
 
 def extract_text_from_pdf(pdf_path: str, gemini_client, gemini_model: str) -> str:
     """
@@ -133,7 +130,6 @@ def extract_text_from_pdf(pdf_path: str, gemini_client, gemini_model: str) -> st
 
     raise RuntimeError("Gemini OCR failed to extract text from the PDF.")
 
-
 class PresentQuizEvaluator:
 
     def __init__(self, num_questions=4):
@@ -196,16 +192,20 @@ class PresentQuizEvaluator:
         print(f"\n[Phase 1] Generating {self.num_questions} questions with {QWEN_TEXT}...")
 
         prompt = f"""You are an educational quiz creator reviewing presentation slide content.
-Based on the slides below, generate exactly {self.num_questions} factual questions \
-that a presenter SHOULD be able to answer if they properly explained these slides.
+Based on the slides below, generate exactly {self.num_questions} conceptual questions \
+that test whether a presenter truly understood and explained the material.
 
 SLIDE CONTENT:
 {slide_text}
 
 Rules:
-- Every question must be answerable from the slide content above.
-- Prefer specific facts: definitions, numbers, steps, names, comparisons.
-- Each answer should be concise (a word, number, or short phrase).
+- Ask about core concepts, definitions, mechanisms, and comparisons — not surface details.
+- Questions should start with "What is...", "How does...", "Why...", "What are the...".
+- Answers must be full, complete sentences that explain the concept clearly — \
+not single words or short phrases.
+- Each answer should read like a well-explained definition or insight a student \
+would write down in their notes.
+- Do NOT ask about slide count, formatting, or structure.
 - Return ONLY a valid JSON array — no explanation, no markdown fences.
 
 Format:
@@ -234,8 +234,9 @@ Format:
 
         prompt = f"""Watch the video carefully and answer each question based ONLY on \
 what the presenter says or shows in the video.
-Be concise — a word, number, or short phrase per answer.
-If the presenter did not cover a topic, write "not mentioned".
+Write a full, clear sentence or short paragraph for each answer — explain the concept \
+the way the presenter did, not just a keyword.
+If the presenter did not cover a topic at all, write "not mentioned".
 
 QUESTIONS:
 {q_block}
@@ -284,10 +285,15 @@ Format:
 
         prompt = f"""You are a strict but fair grader evaluating whether a presenter \
 properly explained their slides.
-For each item, score how well the predicted answer matches the correct answer:
-  1.0 — fully correct or semantically equivalent
-  0.5 — partially correct or mentioned vaguely
-  0.0 — wrong, missing, or "not mentioned"
+Compare the predicted answer to the correct answer semantically — full wording does not \
+need to match exactly, but the core concept must be covered.
+
+Scoring:
+  1.0 — the core concept is fully and correctly explained
+  0.75 — mostly correct but missing one minor detail
+  0.5 — partially correct, key idea only vaguely covered
+  0.25 — very little relevant content, mostly off
+  0.0 — wrong, completely off-topic, or "not mentioned"
 
 {items}
 
@@ -339,7 +345,6 @@ Format:
             json.dump(result, f, indent=2, ensure_ascii=False)
 
         print(f"\nSaved  → {output_path}")
-        print(f"Score  → {total_score}/{max_score}")
         return result
 
 if __name__ == "__main__":
