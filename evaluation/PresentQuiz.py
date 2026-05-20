@@ -3,301 +3,361 @@ import json
 import time
 import re
 import base64
+import requests
 from pathlib import Path
 from google import genai
 from google.genai import types
 
-API_KEY = os.environ.get("GEMINI_API_KEY", "AIzaSyBSCM2DviBwQF_eUd5gEIS4lDmnY9mewNI")
+
+API_KEY = os.environ.get("GEMINI_API_KEY")
 if not API_KEY:
     raise EnvironmentError("Missing GEMINI_API_KEY")
 
 client = genai.Client(api_key=API_KEY)
 
-MODELS_TO_TRY = [
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-2.5-pro",
-]
+GEMINI_PRIMARY   = "gemini-2.5-flash"
+GEMINI_FALLBACKS = ["gemini-2.5-flash-lite", "gemini-2.5-pro"]
 
-RETRY_429_DELAY = 15
-MAX_429_RETRIES = 3
+OLLAMA_BASE_URL  = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+QWEN_TEXT        = "qwen2.5:7b"
+OLLAMA_TIMEOUT   = int(os.environ.get("OLLAMA_TIMEOUT", "120"))
 
-IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+RETRY_429_DELAY  = 15
+MAX_429_RETRIES  = 3
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
-
-MIME_MAP = {
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".webp": "image/webp",
-}
-
-VIDEO_MIME_MAP = {
-    ".mp4": "video/mp4",
-    ".mov": "video/quicktime",
-    ".avi": "video/x-msvideo",
-    ".mkv": "video/x-matroska",
+VIDEO_MIME_MAP   = {
+    ".mp4":  "video/mp4",
+    ".mov":  "video/quicktime",
+    ".avi":  "video/x-msvideo",
+    ".mkv":  "video/x-matroska",
     ".webm": "video/webm",
 }
 
 
-def get_video_from_output_folder(output_dir="Data/output"):
+def get_pdf_from_output_folder(output_dir="Data/output"):
     folder = Path(output_dir)
-
     if not folder.exists():
         raise FileNotFoundError(f"Output folder not found: {output_dir}")
+    pdfs = [f for f in folder.iterdir() if f.suffix.lower() == ".pdf"]
+    if not pdfs:
+        raise FileNotFoundError(f"No PDF found in: {output_dir}")
+    if len(pdfs) > 1:
+        print(f"Multiple PDFs found — using: {pdfs[0].name}")
+    return str(pdfs[0])
 
-    video_files = [
-        f for f in folder.iterdir()
-        if f.suffix.lower() in VIDEO_EXTENSIONS
+
+def get_video_from_output_folder(output_dir="Data/output"):
+    folder = Path(output_dir)
+    if not folder.exists():
+        raise FileNotFoundError(f"Output folder not found: {output_dir}")
+    videos = [f for f in folder.iterdir() if f.suffix.lower() in VIDEO_EXTENSIONS]
+    if not videos:
+        raise FileNotFoundError(f"No video files found in: {output_dir}")
+    if len(videos) > 1:
+        print(f"Multiple videos found — using: {videos[0].name}")
+    return str(videos[0])
+
+
+def _parse_json(text: str):
+    text = re.sub(r"^```(json)?", "", text.strip())
+    text = re.sub(r"```$",        "", text.strip())
+    return json.loads(text.strip())
+
+
+def extract_text_from_pdf(pdf_path: str, gemini_client, gemini_model: str) -> str:
+    """
+    Render every PDF page as an image with PyMuPDF, then send all pages
+    to Gemini vision in one call to read the actual slide content.
+    This handles image-based / scanned PDFs where there is no embedded text.
+
+    Install: pip install pymupdf
+    """
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:
+        raise ImportError(
+            "PyMuPDF is required for PDF extraction.\n"
+            "Install it with:  pip install pymupdf"
+        )
+
+    path = Path(pdf_path)
+    if not path.exists():
+        raise FileNotFoundError(f"PDF not found: {pdf_path}")
+
+    doc = fitz.open(str(path))
+    image_parts = []
+
+    for i, page in enumerate(doc, start=1):
+        # Render at 150 DPI — enough for Gemini to read text clearly
+        pix  = page.get_pixmap(dpi=150)
+        data = base64.b64encode(pix.tobytes("png")).decode("utf-8")
+        image_parts.append(
+            types.Part(inline_data=types.Blob(mime_type="image/png", data=data))
+        )
+
+    doc.close()
+    print(f"  Rendered {len(image_parts)} slide(s) from '{path.name}' — sending to Gemini OCR...")
+
+    prompt = (
+        "You are reading a set of presentation slides. "
+        "For each slide image, transcribe ALL visible text exactly as it appears: "
+        "titles, bullet points, labels, numbers, captions — everything. "
+        "Separate each slide with a header line: '--- Slide N ---'. "
+        "Do NOT summarise, paraphrase, or skip any slide."
+    )
+
+    contents = [
+        types.Content(
+            role="user",
+            parts=image_parts + [types.Part(text=prompt)]
+        )
     ]
 
-    if not video_files:
-        raise FileNotFoundError(f"No video files found in: {output_dir}")
+    for attempt in range(MAX_429_RETRIES):
+        try:
+            res = gemini_client.models.generate_content(
+                model=gemini_model,
+                contents=contents,
+                config=types.GenerateContentConfig(),
+            )
+            if res.text:
+                print(f"  OCR complete — {len(res.text)} chars extracted.")
+                return res.text
+        except Exception as e:
+            if "429" in str(e):
+                print(f"  OCR rate-limited, waiting {RETRY_429_DELAY}s...")
+                time.sleep(RETRY_429_DELAY)
+                continue
+            raise
 
-    if len(video_files) > 1:
-        print(f"Multiple videos found. Using first one: {video_files[0].name}")
-
-    return str(video_files[0])
+    raise RuntimeError("Gemini OCR failed to extract text from the PDF.")
 
 
 class PresentQuizEvaluator:
 
-    def __init__(self, model_name="gemini-2.5-flash", num_questions=4):
-        self.model_id = model_name
+    def __init__(self, num_questions=4):
         self.num_questions = num_questions
 
-    def load_slide_images(self, slides_dir):
-        folder = Path(slides_dir)
-
-        images = sorted(
-            f for f in folder.iterdir()
-            if f.suffix.lower() in IMAGE_EXTENSIONS
-        )
-
-        parts = []
-        for img in images:
-            mime = MIME_MAP[img.suffix.lower()]
-            data = base64.b64encode(img.read_bytes()).decode("utf-8")
-
-            parts.append(
-                types.Part(
-                    inline_data=types.Blob(mime_type=mime, data=data)
-                )
-            )
-
-        return parts
-
-    def load_video(self, video_path):
+    def _load_video_part(self, video_path: str):
+        """Return a video as a Gemini Part for multimodal answering."""
         path = Path(video_path)
         mime = VIDEO_MIME_MAP[path.suffix.lower()]
         data = base64.b64encode(path.read_bytes()).decode("utf-8")
+        return types.Part(inline_data=types.Blob(mime_type=mime, data=data))
 
-        return types.Part(
-            inline_data=types.Blob(mime_type=mime, data=data)
-        )
-
-    def _parse_json(self, text):
-        text = re.sub(r"^```(json)?", "", text.strip())
-        text = re.sub(r"```$", "", text.strip())
-        return json.loads(text)
-
-    def _call_model(self, model, contents, config):
-        for _ in range(MAX_429_RETRIES):
-            try:
-                res = client.models.generate_content(
-                    model=model,
-                    contents=contents,
-                    config=config,
-                )
-                if res.text:
-                    return self._parse_json(res.text)
-            except Exception as e:
-                if "429" in str(e):
-                    time.sleep(RETRY_429_DELAY)
-                    continue
+    def _call_ollama(self, prompt: str, label: str):
+        url     = f"{OLLAMA_BASE_URL}/api/chat"
+        payload = {
+            "model":    QWEN_TEXT,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream":   False,
+            "options":  {"temperature": 0.2},
+        }
+        print(f"  [{label}] calling {QWEN_TEXT} via Ollama...")
+        try:
+            resp = requests.post(url, json=payload, timeout=OLLAMA_TIMEOUT)
+            if not resp.ok:
+                print(f"  [{label}] HTTP {resp.status_code}: {resp.text[:400]}")
+                resp.raise_for_status()
+            return _parse_json(resp.json()["message"]["content"])
+        except requests.exceptions.ConnectionError:
+            print(f"  [{label}] Cannot reach Ollama at {OLLAMA_BASE_URL} — is it running?")
+        except requests.exceptions.Timeout:
+            print(f"  [{label}] Timed out after {OLLAMA_TIMEOUT}s.")
+        except Exception as e:
+            print(f"  [{label}] Error: {e}")
         return None
 
-    def _try_models(self, contents, config, label):
-        for m in [self.model_id] + MODELS_TO_TRY:
-            print(f"[{label}] using {m}")
-            try:
-                out = self._call_model(m, contents, config)
-                if out:
-                    return out
-            except Exception:
-                continue
+    def _call_gemini(self, contents, config, label: str):
+        for model in [GEMINI_PRIMARY] + GEMINI_FALLBACKS:
+            print(f"  [{label}] trying {model}...")
+            for _ in range(MAX_429_RETRIES):
+                try:
+                    res = client.models.generate_content(
+                        model=model, contents=contents, config=config
+                    )
+                    if res.text:
+                        return _parse_json(res.text)
+                except Exception as e:
+                    if "429" in str(e):
+                        print(f"  [{label}] rate-limited, waiting {RETRY_429_DELAY}s...")
+                        time.sleep(RETRY_429_DELAY)
+                        continue
+                    print(f"  [{label}] {model} error: {e}")
+                    break
         return None
 
-    def generate_questions(self, media_parts):
-        print("\n[Phase 1] Generating questions...")
+    def generate_questions(self, slide_text: str) -> list:
+        """
+        qwen2.5:7b reads the extracted slide text and generates
+        questions that a presenter should cover when explaining these slides.
+        """
+        print(f"\n[Phase 1] Generating {self.num_questions} questions with {QWEN_TEXT}...")
 
-        prompt = f"""
-Generate {self.num_questions} factual questions ONLY from the provided slides/video.
+        prompt = f"""You are an educational quiz creator reviewing presentation slide content.
+Based on the slides below, generate exactly {self.num_questions} factual questions \
+that a presenter SHOULD be able to answer if they properly explained these slides.
 
-Return JSON:
+SLIDE CONTENT:
+{slide_text}
+
+Rules:
+- Every question must be answerable from the slide content above.
+- Prefer specific facts: definitions, numbers, steps, names, comparisons.
+- Each answer should be concise (a word, number, or short phrase).
+- Return ONLY a valid JSON array — no explanation, no markdown fences.
+
+Format:
 [
-  {{
-    "question": "...",
-    "answer": "..."
-  }}
-]
-"""
+  {{"question": "...", "answer": "..."}}
+]"""
 
-        config = types.GenerateContentConfig(
-            response_mime_type="application/json",
-        )
-
-        contents = [
-            types.Content(
-                role="user",
-                parts=media_parts + [types.Part(text=prompt)]
+        result = self._call_ollama(prompt, "Q-Gen")
+        if not result:
+            raise RuntimeError(
+                f"Question generation failed. "
+                f"Is '{QWEN_TEXT}' pulled? Run: ollama pull {QWEN_TEXT}"
             )
-        ]
+        print(f"  Generated {len(result)} question(s).")
+        return result
 
-        return self._try_models(contents, config, "Q-Gen")
+    def answer_questions(self, questions: list, video_path: str) -> list:
+        """
+        Gemini watches the video and answers each question based solely
+        on what the presenter said — testing if they explained their slides.
+        """
+        print(f"\n[Phase 2] Answering questions from video with Gemini ({GEMINI_PRIMARY})...")
 
-    def answer_questions(self, questions, media_parts):
-        print("\n[Phase 2] Answering questions...")
+        video_part = self._load_video_part(video_path)
+        q_block    = "\n".join(f"{i+1}. {q['question']}" for i, q in enumerate(questions))
 
-        q_block = "\n".join(
-            f"{i+1}. {q['question']}"
-            for i, q in enumerate(questions)
-        )
-
-        prompt = f"""
-Answer ONLY using the provided content.
+        prompt = f"""Watch the video carefully and answer each question based ONLY on \
+what the presenter says or shows in the video.
+Be concise — a word, number, or short phrase per answer.
+If the presenter did not cover a topic, write "not mentioned".
 
 QUESTIONS:
 {q_block}
 
-Return JSON:
+Return ONLY a valid JSON array — no explanation, no markdown fences.
+
+Format:
 [
-  {{
-    "question_number": 1,
-    "answer": "..."
-  }}
-]
-"""
+  {{"question_number": 1, "answer": "..."}}
+]"""
 
-        config = types.GenerateContentConfig(
-            response_mime_type="application/json",
-        )
-
+        config   = types.GenerateContentConfig(response_mime_type="application/json")
         contents = [
-            types.Content(
-                role="user",
-                parts=media_parts + [types.Part(text=prompt)]
-            )
+            types.Content(role="user", parts=[video_part, types.Part(text=prompt)])
         ]
 
-        answers = self._try_models(contents, config, "Q-A")
+        answers = self._call_gemini(contents, config, "Q-A")
+        if not answers:
+            raise RuntimeError("Answering phase failed across all Gemini models.")
 
-        ans_map = {a["question_number"]: a["answer"] for a in answers}
-
-        enriched = []
-        for i, q in enumerate(questions):
-            enriched.append({
-                **q,
-                "vlm_answer": ans_map.get(i + 1, "")
-            })
-
+        ans_map  = {a["question_number"]: a["answer"] for a in answers}
+        enriched = [
+            {**q, "vlm_answer": ans_map.get(i + 1, "not mentioned")}
+            for i, q in enumerate(questions)
+        ]
         return enriched
 
-    def grade(self, qa_pairs):
-        print("\n[Phase 3] Grading...")
+    def grade(self, qa_pairs: list) -> list:
+        """
+        qwen2.5:7b compares what the slides expected (correct answer)
+        vs what the presenter said in the video (vlm_answer).
+        """
+        print(f"\n[Phase 3] Grading with {QWEN_TEXT}...")
 
-        prompt_data = json.dumps([
-            {
-                "question": q["question"],
-                "correct": q["answer"],
-                "predicted": q["vlm_answer"]
-            }
-            for q in qa_pairs
-        ], indent=2)
-
-        prompt = f"""
-Grade answers:
-
-{prompt_data}
-
-Return JSON:
-[
-  {{
-    "question_number": 1,
-    "score": 0.0-1.0
-  }}
-]
-"""
-
-        config = types.GenerateContentConfig(
-            response_mime_type="application/json",
+        items = json.dumps(
+            [
+                {
+                    "question":  q["question"],
+                    "correct":   q["answer"],
+                    "predicted": q["vlm_answer"],
+                }
+                for q in qa_pairs
+            ],
+            indent=2,
         )
 
-        contents = [
-            types.Content(role="user", parts=[types.Part(text=prompt)])
-        ]
+        prompt = f"""You are a strict but fair grader evaluating whether a presenter \
+properly explained their slides.
+For each item, score how well the predicted answer matches the correct answer:
+  1.0 — fully correct or semantically equivalent
+  0.5 — partially correct or mentioned vaguely
+  0.0 — wrong, missing, or "not mentioned"
 
-        grades = self._try_models(contents, config, "Grade")
+{items}
+
+Return ONLY a valid JSON array — no explanation, no markdown fences.
+
+Format:
+[
+  {{"question_number": 1, "score": 0.0}}
+]"""
+
+        grades = self._call_ollama(prompt, "Grade")
+        if not grades:
+            raise RuntimeError(
+                f"Grading failed. Is '{QWEN_TEXT}' pulled? Run: ollama pull {QWEN_TEXT}"
+            )
 
         gmap = {g["question_number"]: g["score"] for g in grades}
-
         for i, q in enumerate(qa_pairs):
             q["score"] = gmap.get(i + 1, 0.0)
-
         return qa_pairs
 
-    def evaluate(self, slides_dir=None, video_path=None):
+    def evaluate(self, pdf_path: str, video_path: str):
+        """
+        pdf_path   — path to the slides PDF (text extracted locally, no vision needed)
+        video_path — path to the presentation video (Gemini watches this)
+        """
+        print("\n[Step 0] Extracting slide text from PDF...")
+        slide_text = extract_text_from_pdf(pdf_path, client, GEMINI_PRIMARY)
 
-        if not slides_dir and not video_path:
-            raise ValueError("Provide slides or video")
+        questions = self.generate_questions(slide_text)
 
-        if video_path:
-            media_parts = [self.load_video(video_path)]
-        else:
-            media_parts = self.load_slide_images(slides_dir)
+        qa = self.answer_questions(questions, video_path)
 
-        questions = self.generate_questions(media_parts)
-        qa = self.answer_questions(questions, media_parts)
         graded = self.grade(qa)
 
         total_score = sum(q["score"] for q in graded)
-        max_score = self.num_questions
+        max_score   = self.num_questions
 
         os.makedirs("Evaluation/Results", exist_ok=True)
-
         output_path = "Evaluation/Results/present_quiz_result.json"
 
         result = {
             "total_score": total_score,
-            "max_score": max_score,
-            "questions": graded
+            "max_score":   max_score,
+            "questions":   graded,
         }
 
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(result, f, indent=2, ensure_ascii=False)
 
-        print(f"\nSaved to: {output_path}")
-        print(f"Score: {total_score}/{max_score}")
-
+        print(f"\nSaved  → {output_path}")
+        print(f"Score  → {total_score}/{max_score}")
         return result
 
-
 if __name__ == "__main__":
-
-    evaluator = PresentQuizEvaluator(
-        model_name="gemini-2.5-flash",
-        num_questions=4
-    )
+    evaluator = PresentQuizEvaluator(num_questions=4)
 
     try:
         video_path = get_video_from_output_folder()
     except Exception as e:
-        print(e)
+        print(f"Video error: {e}")
         video_path = None
 
-    evaluator.evaluate(
-        slides_dir="Data/intermediate/slide_images",
-        video_path=video_path
-    )
+    try:
+        pdf_path = get_pdf_from_output_folder()
+    except Exception as e:
+        print(f"PDF error: {e}")
+        pdf_path = None
+
+    if video_path and pdf_path:
+        evaluator.evaluate(pdf_path=pdf_path, video_path=video_path)
+    else:
+        print("Cannot evaluate — need both a PDF and a video in Data/output/.")
