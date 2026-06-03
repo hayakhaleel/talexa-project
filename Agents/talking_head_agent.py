@@ -34,7 +34,7 @@ class TalkingHeadApiAgent:
         self.source_image = os.path.abspath(source_image)
         self.audio_dir = os.path.abspath(audio_dir)
         self.output_dir = os.path.abspath(output_dir)
-        self.api_key = api_key or "sk_V2_hgu_k2avJCi8faC_62lLDoRiBMm1w1cQ5uHEpdIC3Bp5bFzB"
+        self.api_key = api_key 
         self.ffmpeg_binary = ffmpeg_binary
         self.title = title
         self.poll_interval_seconds = poll_interval_seconds
