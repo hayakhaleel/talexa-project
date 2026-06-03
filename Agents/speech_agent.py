@@ -30,7 +30,7 @@ class SpeechAgent:
         self.subtitles_json_path = subtitles_json_path
         self.output_dir = output_dir
         self.ref_audio_path = ref_audio_path
-        self.api_key = api_key or "sk_0f4715ea095118af6803da9ad114513bc59d53392bea09d1"
+        self.api_key = api_key 
         self.user_voice_name = user_voice_name.strip()
         self.voice_cache_path = voice_cache_path
         self.fallback_voice_id = fallback_voice_id
