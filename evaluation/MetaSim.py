@@ -8,7 +8,7 @@ from google import genai
 from google.genai import types
 import pdfplumber
 
-API_KEY = os.environ.get("GEMINI_API_KEY", "AIzaSyBSCM2DviBwQF_eUd5gEIS4lDmnY9mewNI")
+API_KEY = os.environ.get("GEMINI_API_KEY")
 if not API_KEY:
     raise EnvironmentError(
         "GEMINI_API_KEY environment variable is not set. "
